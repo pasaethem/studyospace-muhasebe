@@ -4,12 +4,17 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut } from "lucide-react";
 
-const ORTAKLAR = ["Ethem", "Ferdi", "Haydar"];
+const ORTAKLAR = ["Ethem", "Ferdi", "Haydar", "Aden"];
 const SUBELER = ["İstanbul", "Şanlıurfa"];
 const ORTAK_SIFRELERI: Record<string, string> = {
   "Ethem": "ethem123",
   "Ferdi": "ferdi123",
   "Haydar": "haydar123",
+  "Aden": "aden123",
+};
+// Sadece kendi şubesini görebilen kısıtlı ortaklar
+const SUBE_KISITLI_ORTAKLAR: Record<string, string> = {
+  "Aden": "Şanlıurfa",
 };
 
 const GIDER_KATEGORILERI: Record<string, string[]> = {
@@ -133,7 +138,12 @@ export default function HomePage() {
     if (ORTAK_SIFRELERI[girisOrtak] === girisSifre) {
       localStorage.setItem("aktif_ortak", girisOrtak);
       setGiris(girisOrtak);
-      setForm((f) => ({ ...f, ortak: girisOrtak }));
+      const kisitliSube = SUBE_KISITLI_ORTAKLAR[girisOrtak];
+      setForm((f) => ({ 
+        ...f, 
+        ortak: girisOrtak,
+        sehir: kisitliSube || f.sehir,
+      }));
       setGirisHata("");
     } else {
       setGirisHata("Şifre yanlış");
@@ -198,8 +208,12 @@ export default function HomePage() {
   const filtrelenmis = useMemo(() => {
     const simdi = new Date();
     const bugun = new Date(simdi.getFullYear(), simdi.getMonth(), simdi.getDate());
+    const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
 
     return kayitlar.filter((k) => {
+      // Şube kısıtı: Aden sadece kendi şubesini görür
+      if (kisitliSube && k.sehir !== kisitliSube) return false;
+      
       if (filtreSehir !== "Hepsi" && k.sehir !== filtreSehir) return false;
       if (filtreOrtak !== "Hepsi" && k.ortak !== filtreOrtak) return false;
 
@@ -270,9 +284,13 @@ export default function HomePage() {
     const gun = bugun.getDay() || 7;
     haftaBasi.setDate(bugun.getDate() - gun + 1);
     const ayBasi = new Date(simdi.getFullYear(), simdi.getMonth(), 1);
+    const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
 
     const hesapla = (baslangic: Date) => {
-      const list = kayitlar.filter((k) => new Date(k.tarih) >= baslangic);
+      const list = kayitlar.filter((k) => {
+        if (kisitliSube && k.sehir !== kisitliSube) return false;
+        return new Date(k.tarih) >= baslangic;
+      });
       const gelir = list.filter((k) => k.tip === "gelir").reduce((s, k) => s + Number(k.tutar), 0);
       const gider = list.filter((k) => k.tip === "gider").reduce((s, k) => s + Number(k.tutar), 0);
       return { gelir, gider };
@@ -282,11 +300,13 @@ export default function HomePage() {
       haftalik: hesapla(haftaBasi),
       aylik: hesapla(ayBasi),
     };
-  }, [kayitlar]);
+  }, [kayitlar, giris]);
 
   const exportCSV = () => {
+    const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
+    const exportKayitlar = kisitliSube ? kayitlar.filter((k) => k.sehir === kisitliSube) : kayitlar;
     const headers = ["Tarih", "Tip", "Tutar", "Kategori", "Müşteri", "Açıklama", "Şehir", "Ortak"];
-    const rows = kayitlar.map((k) => [k.tarih, k.tip, k.tutar, k.kategori, k.musteri || "", k.aciklama || "", k.sehir, k.ortak]);
+    const rows = exportKayitlar.map((k) => [k.tarih, k.tip, k.tutar, k.kategori, k.musteri || "", k.aciklama || "", k.sehir, k.ortak]);
     const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -356,7 +376,11 @@ export default function HomePage() {
       <header className="bg-white border-b border-stone-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-stone-900 tracking-tight">Studyospace Kasa</h1>
+            <h1 className="text-2xl font-bold text-stone-900 tracking-tight">
+              {giris && SUBE_KISITLI_ORTAKLAR[giris] 
+                ? `${SUBE_KISITLI_ORTAKLAR[giris]} Kasası` 
+                : "Studyospace Kasa"}
+            </h1>
             <p className="text-xs text-stone-500 mt-0.5">Giriş: <span className="font-semibold">{giris}</span></p>
           </div>
           <div className="flex items-center gap-2">
@@ -441,10 +465,12 @@ export default function HomePage() {
                 </button>
               ))}
             </div>
-            <select value={filtreSehir} onChange={(e) => setFiltreSehir(e.target.value)} className="px-3 py-1.5 bg-stone-100 border-0 rounded-lg text-xs font-medium text-stone-700 cursor-pointer">
-              <option value="Hepsi">Tüm Şubeler</option>
-              {SUBELER.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            {!(giris && SUBE_KISITLI_ORTAKLAR[giris]) && (
+              <select value={filtreSehir} onChange={(e) => setFiltreSehir(e.target.value)} className="px-3 py-1.5 bg-stone-100 border-0 rounded-lg text-xs font-medium text-stone-700 cursor-pointer">
+                <option value="Hepsi">Tüm Şubeler</option>
+                {SUBELER.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
             <select value={filtreOrtak} onChange={(e) => setFiltreOrtak(e.target.value)} className="px-3 py-1.5 bg-stone-100 border-0 rounded-lg text-xs font-medium text-stone-700 cursor-pointer">
               <option value="Hepsi">Tüm Ortaklar</option>
               {ORTAKLAR.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -500,26 +526,28 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="bg-white border border-stone-200 rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Building2 className="w-4 h-4 text-stone-500" />
-              <h3 className="font-semibold text-stone-900">Şube Bazında</h3>
-            </div>
-            <div className="space-y-3">
-              {sehirDagilim.map((s) => (
-                <div key={s.isim} className="p-3 bg-stone-50 rounded-lg">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-semibold text-stone-800 text-sm">{s.isim}</span>
-                    <span className={`text-sm font-bold ${s.net >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{formatTL(s.net)}</span>
+          {!(giris && SUBE_KISITLI_ORTAKLAR[giris]) && (
+            <div className="bg-white border border-stone-200 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Building2 className="w-4 h-4 text-stone-500" />
+                <h3 className="font-semibold text-stone-900">Şube Bazında</h3>
+              </div>
+              <div className="space-y-3">
+                {sehirDagilim.map((s) => (
+                  <div key={s.isim} className="p-3 bg-stone-50 rounded-lg">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-semibold text-stone-800 text-sm">{s.isim}</span>
+                      <span className={`text-sm font-bold ${s.net >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{formatTL(s.net)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div><span className="text-stone-500">Gelir: </span><span className="text-emerald-600 font-medium">{formatTL(s.gelir)}</span></div>
+                      <div><span className="text-stone-500">Gider: </span><span className="text-rose-600 font-medium">{formatTL(s.gider)}</span></div>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div><span className="text-stone-500">Gelir: </span><span className="text-emerald-600 font-medium">{formatTL(s.gelir)}</span></div>
-                    <div><span className="text-stone-500">Gider: </span><span className="text-rose-600 font-medium">{formatTL(s.gider)}</span></div>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -651,11 +679,18 @@ export default function HomePage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Şube</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {SUBELER.map((s) => (
-                    <button key={s} onClick={() => setForm({ ...form, sehir: s })} className={`py-3 rounded-lg font-semibold text-sm transition ${form.sehir === s ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-600"}`}>{s}</button>
-                  ))}
-                </div>
+                {giris && SUBE_KISITLI_ORTAKLAR[giris] ? (
+                  <div className="px-4 py-3 bg-stone-100 rounded-lg text-sm text-stone-700 font-semibold flex items-center gap-2">
+                    <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
+                    {SUBE_KISITLI_ORTAKLAR[giris]} <span className="text-xs font-normal text-stone-500">(sabit şube)</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {SUBELER.map((s) => (
+                      <button key={s} onClick={() => setForm({ ...form, sehir: s })} className={`py-3 rounded-lg font-semibold text-sm transition ${form.sehir === s ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-600"}`}>{s}</button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Ortak</label>
