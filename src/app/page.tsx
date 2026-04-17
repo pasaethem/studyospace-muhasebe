@@ -158,7 +158,7 @@ export default function HomePage() {
       aciklama: form.aciklama || null,
       musteri: form.musteri || null,
       sehir: form.sehir,
-      ortak: form.ortak,
+      ortak: giris!, // Güvenlik: Her zaman giriş yapan ortağın adıyla kaydet
       tarih: form.tarih,
     });
 
@@ -181,7 +181,11 @@ export default function HomePage() {
     });
   };
 
-  const kayitSil = async (id: number) => {
+  const kayitSil = async (id: number, kayitOrtak: string) => {
+    if (kayitOrtak !== giris) {
+      alert(`Bu kayıt ${kayitOrtak} tarafından eklendi. Sadece kendi kayıtlarınızı silebilirsiniz.`);
+      return;
+    }
     if (!confirm("Bu kayıt silinsin mi?")) return;
     const { error } = await supabase.from("kayitlar").delete().eq("id", id);
     if (error) {
@@ -592,9 +596,13 @@ export default function HomePage() {
                   <div className={`font-bold text-sm whitespace-nowrap ${k.tip === "gelir" ? "text-emerald-600" : "text-rose-600"}`}>
                     {k.tip === "gelir" ? "+" : "-"}{formatTL(Number(k.tutar))}
                   </div>
-                  <button onClick={() => kayitSil(k.id)} className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {k.ortak === giris ? (
+                    <button onClick={() => kayitSil(k.id, k.ortak)} className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="Sil">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <div className="p-2 w-8 h-8" title="Başkasının kaydı" />
+                  )}
                 </div>
               ))}
             </div>
@@ -651,10 +659,9 @@ export default function HomePage() {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Ortak</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {ORTAKLAR.map((o) => (
-                    <button key={o} onClick={() => setForm({ ...form, ortak: o })} className={`py-2.5 rounded-lg font-semibold text-sm transition ${form.ortak === o ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-600"}`}>{o}</button>
-                  ))}
+                <div className="px-4 py-3 bg-stone-100 rounded-lg text-sm text-stone-700 font-semibold flex items-center gap-2">
+                  <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
+                  {giris} <span className="text-xs font-normal text-stone-500">(giriş yapan ortak)</span>
                 </div>
               </div>
               <div>
