@@ -2,16 +2,11 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2 } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield } from "lucide-react";
 
 const ORTAKLAR = ["Ethem", "Ferdi", "Haydar", "Aden"];
 const SUBELER = ["İstanbul", "Şanlıurfa"];
-const ORTAK_SIFRELERI: Record<string, string> = {
-  "Ethem": "ethem123",
-  "Ferdi": "ferdi123",
-  "Haydar": "haydar123",
-  "Aden": "aden123",
-};
+const ADMIN_ORTAK = "Ethem"; // Herkesin şifresini değiştirebilir
 // Sadece kendi şubesini görebilen kısıtlı ortaklar
 const SUBE_KISITLI_ORTAKLAR: Record<string, string> = {
   "Aden": "Şanlıurfa",
@@ -85,6 +80,17 @@ export default function HomePage() {
   const [girisOrtak, setGirisOrtak] = useState("Ethem");
   const [girisSifre, setGirisSifre] = useState("");
   const [girisHata, setGirisHata] = useState("");
+  const [girisYukleniyor, setGirisYukleniyor] = useState(false);
+
+  // Şifre değiştirme modalı
+  const [sifreModalOpen, setSifreModalOpen] = useState(false);
+  const [sifreHedefOrtak, setSifreHedefOrtak] = useState("Ethem");
+  const [eskiSifre, setEskiSifre] = useState("");
+  const [yeniSifre, setYeniSifre] = useState("");
+  const [yeniSifre2, setYeniSifre2] = useState("");
+  const [sifreHata, setSifreHata] = useState("");
+  const [sifreBasari, setSifreBasari] = useState("");
+  const [sifreYukleniyor, setSifreYukleniyor] = useState(false);
 
   const [kayitlar, setKayitlar] = useState<Kayit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,8 +145,24 @@ export default function HomePage() {
     setLoading(false);
   };
 
-  const girisYap = () => {
-    if (ORTAK_SIFRELERI[girisOrtak] === girisSifre) {
+  const girisYap = async () => {
+    setGirisYukleniyor(true);
+    setGirisHata("");
+    
+    const { data, error } = await supabase
+      .from("ortak_sifreleri")
+      .select("sifre")
+      .eq("ortak", girisOrtak)
+      .single();
+
+    setGirisYukleniyor(false);
+
+    if (error || !data) {
+      setGirisHata("Şifre kontrol edilemedi, tekrar deneyin");
+      return;
+    }
+
+    if (data.sifre === girisSifre) {
       localStorage.setItem("aktif_ortak", girisOrtak);
       setGiris(girisOrtak);
       const kisitliSube = SUBE_KISITLI_ORTAKLAR[girisOrtak];
@@ -149,10 +171,77 @@ export default function HomePage() {
         ortak: girisOrtak,
         sehir: kisitliSube || f.sehir,
       }));
-      setGirisHata("");
+      setGirisSifre("");
     } else {
       setGirisHata("Şifre yanlış");
     }
+  };
+
+  const sifreDegistir = async () => {
+    setSifreHata("");
+    setSifreBasari("");
+
+    if (!yeniSifre || !yeniSifre2) {
+      setSifreHata("Lütfen yeni şifreyi iki kez girin");
+      return;
+    }
+    if (yeniSifre.length < 4) {
+      setSifreHata("Şifre en az 4 karakter olmalı");
+      return;
+    }
+    if (yeniSifre !== yeniSifre2) {
+      setSifreHata("Yeni şifreler eşleşmiyor");
+      return;
+    }
+
+    setSifreYukleniyor(true);
+
+    // Eski şifre doğrulaması (Ethem başkasının şifresini değiştirirken Ethem'in şifresi sorulur)
+    const dogrulanacakOrtak = giris === ADMIN_ORTAK && sifreHedefOrtak !== giris 
+      ? giris 
+      : sifreHedefOrtak;
+
+    const { data, error } = await supabase
+      .from("ortak_sifreleri")
+      .select("sifre")
+      .eq("ortak", dogrulanacakOrtak)
+      .single();
+
+    if (error || !data) {
+      setSifreHata("Doğrulama başarısız");
+      setSifreYukleniyor(false);
+      return;
+    }
+
+    if (data.sifre !== eskiSifre) {
+      setSifreHata(giris === ADMIN_ORTAK && sifreHedefOrtak !== giris 
+        ? "Kendi (Ethem) şifrenizi yanlış girdiniz" 
+        : "Eski şifre yanlış");
+      setSifreYukleniyor(false);
+      return;
+    }
+
+    // Yeni şifreyi güncelle
+    const { error: updateError } = await supabase
+      .from("ortak_sifreleri")
+      .update({ sifre: yeniSifre, guncelleme: new Date().toISOString() })
+      .eq("ortak", sifreHedefOrtak);
+
+    setSifreYukleniyor(false);
+
+    if (updateError) {
+      setSifreHata("Şifre güncellenemedi: " + updateError.message);
+      return;
+    }
+
+    setSifreBasari(`${sifreHedefOrtak} şifresi başarıyla değiştirildi`);
+    setEskiSifre("");
+    setYeniSifre("");
+    setYeniSifre2("");
+    setTimeout(() => {
+      setSifreModalOpen(false);
+      setSifreBasari("");
+    }, 2000);
   };
 
   const cikisYap = () => {
@@ -410,9 +499,10 @@ export default function HomePage() {
             {girisHata && <p className="text-rose-600 text-sm text-center">{girisHata}</p>}
             <button
               onClick={girisYap}
-              className="w-full py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition"
+              disabled={girisYukleniyor}
+              className="w-full py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              Giriş Yap
+              {girisYukleniyor ? <><Loader2 className="w-4 h-4 animate-spin" /> Giriş yapılıyor...</> : "Giriş Yap"}
             </button>
           </div>
         </div>
@@ -447,6 +537,21 @@ export default function HomePage() {
               title="CSV indir"
             >
               <Download className="w-4 h-4 text-stone-700" />
+            </button>
+            <button
+              onClick={() => { 
+                setSifreHedefOrtak(giris!); 
+                setEskiSifre("");
+                setYeniSifre("");
+                setYeniSifre2("");
+                setSifreHata("");
+                setSifreBasari("");
+                setSifreModalOpen(true); 
+              }}
+              className="p-2 bg-stone-100 hover:bg-stone-200 rounded-lg transition"
+              title="Şifre Değiştir"
+            >
+              <Key className="w-4 h-4 text-stone-700" />
             </button>
             <button
               onClick={cikisYap}
@@ -803,6 +908,120 @@ export default function HomePage() {
               <button onClick={() => { setModalOpen(false); setFotoFile(null); setFotoPreview(null); }} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200 transition">İptal</button>
               <button onClick={kayitEkle} disabled={fotoYukleniyor} className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition disabled:opacity-50 flex items-center justify-center gap-2">
                 {fotoYukleniyor ? <><Loader2 className="w-4 h-4 animate-spin" /> Yükleniyor...</> : "Kaydet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sifreModalOpen && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-md max-h-[95vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-stone-700" />
+                <h2 className="text-lg font-bold text-stone-900">Şifre Değiştir</h2>
+              </div>
+              <button onClick={() => setSifreModalOpen(false)} className="p-1 hover:bg-stone-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Admin seçimi - sadece Ethem için */}
+              {giris === ADMIN_ORTAK && (
+                <div>
+                  <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                    <Shield className="w-3 h-3" /> Hangi ortağın şifresini değiştireceksin?
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {ORTAKLAR.map((o) => (
+                      <button
+                        key={o}
+                        onClick={() => { setSifreHedefOrtak(o); setEskiSifre(""); setSifreHata(""); }}
+                        className={`py-2.5 rounded-lg font-semibold text-sm transition ${
+                          sifreHedefOrtak === o ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-600"
+                        }`}
+                      >
+                        {o} {o === giris && "(Sen)"}
+                      </button>
+                    ))}
+                  </div>
+                  {sifreHedefOrtak !== giris && (
+                    <p className="text-xs text-amber-600 mt-2 flex items-start gap-1">
+                      <Shield className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                      Admin olarak değiştiriyorsun. Doğrulama için KENDİ (Ethem) şifreni gireceksin.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
+                  {giris === ADMIN_ORTAK && sifreHedefOrtak !== giris 
+                    ? "Kendi (Ethem) şifren" 
+                    : "Mevcut Şifre"}
+                </label>
+                <input
+                  type="password"
+                  value={eskiSifre}
+                  onChange={(e) => setEskiSifre(e.target.value)}
+                  placeholder="••••••"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
+                  Yeni Şifre ({sifreHedefOrtak} için)
+                </label>
+                <input
+                  type="password"
+                  value={yeniSifre}
+                  onChange={(e) => setYeniSifre(e.target.value)}
+                  placeholder="En az 4 karakter"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
+                  Yeni Şifre (Tekrar)
+                </label>
+                <input
+                  type="password"
+                  value={yeniSifre2}
+                  onChange={(e) => setYeniSifre2(e.target.value)}
+                  placeholder="••••••"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              {sifreHata && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                  <p className="text-rose-700 text-sm font-medium">{sifreHata}</p>
+                </div>
+              )}
+              {sifreBasari && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <p className="text-emerald-700 text-sm font-medium">✓ {sifreBasari}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="sticky bottom-0 bg-white border-t border-stone-200 p-4 flex gap-2">
+              <button
+                onClick={() => setSifreModalOpen(false)}
+                className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200 transition"
+              >
+                İptal
+              </button>
+              <button
+                onClick={sifreDegistir}
+                disabled={sifreYukleniyor}
+                className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {sifreYukleniyor ? <><Loader2 className="w-4 h-4 animate-spin" /> Güncelleniyor...</> : "Şifreyi Değiştir"}
               </button>
             </div>
           </div>
