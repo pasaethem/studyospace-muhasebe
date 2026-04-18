@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2 } from "lucide-react";
 
 const ORTAKLAR = ["Ethem", "Ferdi", "Haydar", "Aden"];
 const SUBELER = ["İstanbul", "Şanlıurfa"];
@@ -73,6 +73,7 @@ type Kayit = {
   ortak: string;
   tarih: string;
   olusturma: string;
+  foto_url: string | null;
 };
 
 const formatTL = (n: number) => new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + " ₺";
@@ -102,6 +103,10 @@ export default function HomePage() {
     ortak: "Ethem",
     tarih: todayISO(),
   });
+  const [fotoFile, setFotoFile] = useState<File | null>(null);
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null);
+  const [fotoYukleniyor, setFotoYukleniyor] = useState(false);
+  const [buyukFoto, setBuyukFoto] = useState<string | null>(null);
 
   // Giriş kontrolü (localStorage)
   useEffect(() => {
@@ -161,6 +166,28 @@ export default function HomePage() {
       alert("Lütfen tutar ve kategori alanlarını doldurun");
       return;
     }
+
+    let foto_url: string | null = null;
+
+    // Foto varsa önce yükle
+    if (fotoFile && form.tip === "gider") {
+      setFotoYukleniyor(true);
+      const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${fotoFile.name.split('.').pop()}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("fisler")
+        .upload(fileName, fotoFile);
+
+      if (uploadError) {
+        alert("Fotoğraf yüklenemedi: " + uploadError.message);
+        setFotoYukleniyor(false);
+        return;
+      }
+
+      const { data: urlData } = supabase.storage.from("fisler").getPublicUrl(fileName);
+      foto_url = urlData.publicUrl;
+      setFotoYukleniyor(false);
+    }
+
     const { error } = await supabase.from("kayitlar").insert({
       tip: form.tip,
       tutar: parseFloat(form.tutar),
@@ -168,8 +195,9 @@ export default function HomePage() {
       aciklama: form.aciklama || null,
       musteri: form.musteri || null,
       sehir: form.sehir,
-      ortak: giris!, // Güvenlik: Her zaman giriş yapan ortağın adıyla kaydet
+      ortak: giris!,
       tarih: form.tarih,
+      foto_url: foto_url,
     });
 
     if (error) {
@@ -179,24 +207,53 @@ export default function HomePage() {
 
     await verileriYukle();
     setModalOpen(false);
+    setFotoFile(null);
+    setFotoPreview(null);
     setForm({
       tip: "gider",
       tutar: "",
       kategori: "",
       aciklama: "",
       musteri: "",
-      sehir: form.sehir,
+      sehir: SUBE_KISITLI_ORTAKLAR[giris!] || form.sehir,
       ortak: giris || "Ethem",
       tarih: todayISO(),
     });
   };
 
-  const kayitSil = async (id: number, kayitOrtak: string) => {
+  const fotoSec = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Fotoğraf çok büyük! Max 5MB olmalı.");
+      return;
+    }
+    setFotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setFotoPreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const fotoKaldir = () => {
+    setFotoFile(null);
+    setFotoPreview(null);
+  };
+
+  const kayitSil = async (id: number, kayitOrtak: string, foto_url: string | null) => {
     if (kayitOrtak !== giris) {
       alert(`Bu kayıt ${kayitOrtak} tarafından eklendi. Sadece kendi kayıtlarınızı silebilirsiniz.`);
       return;
     }
     if (!confirm("Bu kayıt silinsin mi?")) return;
+
+    // Foto varsa onu da sil
+    if (foto_url) {
+      const fileName = foto_url.split("/").pop();
+      if (fileName) {
+        await supabase.storage.from("fisler").remove([fileName]);
+      }
+    }
+
     const { error } = await supabase.from("kayitlar").delete().eq("id", id);
     if (error) {
       alert("Silinemedi: " + error.message);
@@ -624,8 +681,17 @@ export default function HomePage() {
                   <div className={`font-bold text-sm whitespace-nowrap ${k.tip === "gelir" ? "text-emerald-600" : "text-rose-600"}`}>
                     {k.tip === "gelir" ? "+" : "-"}{formatTL(Number(k.tutar))}
                   </div>
+                  {k.foto_url && (
+                    <button 
+                      onClick={() => setBuyukFoto(k.foto_url)} 
+                      className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition"
+                      title="Fişi görüntüle"
+                    >
+                      <ImageIcon className="w-4 h-4" />
+                    </button>
+                  )}
                   {k.ortak === giris ? (
-                    <button onClick={() => kayitSil(k.id, k.ortak)} className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="Sil">
+                    <button onClick={() => kayitSil(k.id, k.ortak, k.foto_url)} className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition" title="Sil">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   ) : (
@@ -699,16 +765,71 @@ export default function HomePage() {
                   {giris} <span className="text-xs font-normal text-stone-500">(giriş yapan ortak)</span>
                 </div>
               </div>
+              {form.tip === "gider" && (
+                <div>
+                  <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Fiş / Dekont Fotoğrafı (opsiyonel)</label>
+                  {fotoPreview ? (
+                    <div className="relative">
+                      <img src={fotoPreview} alt="Fiş" className="w-full h-48 object-cover rounded-lg border border-stone-200" />
+                      <button 
+                        onClick={fotoKaldir}
+                        className="absolute top-2 right-2 p-2 bg-white/90 hover:bg-white rounded-full shadow-md"
+                      >
+                        <X className="w-4 h-4 text-stone-700" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="flex flex-col items-center justify-center gap-1 py-4 bg-stone-100 hover:bg-stone-200 rounded-lg cursor-pointer transition">
+                        <Camera className="w-5 h-5 text-stone-700" />
+                        <span className="text-xs font-semibold text-stone-700">Kamera</span>
+                        <input type="file" accept="image/*" capture="environment" onChange={fotoSec} className="hidden" />
+                      </label>
+                      <label className="flex flex-col items-center justify-center gap-1 py-4 bg-stone-100 hover:bg-stone-200 rounded-lg cursor-pointer transition">
+                        <ImageIcon className="w-5 h-5 text-stone-700" />
+                        <span className="text-xs font-semibold text-stone-700">Galeri</span>
+                        <input type="file" accept="image/*" onChange={fotoSec} className="hidden" />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Tarih</label>
                 <input type="date" value={form.tarih} onChange={(e) => setForm({ ...form, tarih: e.target.value })} className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400" />
               </div>
             </div>
             <div className="sticky bottom-0 bg-white border-t border-stone-200 p-4 flex gap-2">
-              <button onClick={() => setModalOpen(false)} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200 transition">İptal</button>
-              <button onClick={kayitEkle} className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition">Kaydet</button>
+              <button onClick={() => { setModalOpen(false); setFotoFile(null); setFotoPreview(null); }} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200 transition">İptal</button>
+              <button onClick={kayitEkle} disabled={fotoYukleniyor} className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                {fotoYukleniyor ? <><Loader2 className="w-4 h-4 animate-spin" /> Yükleniyor...</> : "Kaydet"}
+              </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {buyukFoto && (
+        <div 
+          className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4"
+          onClick={() => setBuyukFoto(null)}
+        >
+          <button 
+            onClick={() => setBuyukFoto(null)}
+            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full"
+          >
+            <X className="w-6 h-6 text-white" />
+          </button>
+          <img src={buyukFoto} alt="Fiş" className="max-w-full max-h-full object-contain rounded-lg" />
+          <a 
+            href={buyukFoto} 
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-white text-stone-900 rounded-lg font-semibold text-sm hover:bg-stone-100"
+          >
+            Yeni sekmede aç
+          </a>
         </div>
       )}
     </div>
