@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield, Briefcase, Clock, CheckCircle2, AlertCircle, DollarSign, Phone, FileText, Edit2 } from "lucide-react";
 
-const ORTAKLAR = ["Ethem", "Ferdi", "Haydar", "Aden"];
+const ORTAKLAR = ["Ethem", "Ferdi", "Aden"];
 const SUBELER = ["İstanbul", "Şanlıurfa"];
 const ADMIN_ORTAK = "Ethem"; // Herkesin şifresini değiştirebilir
 // Sadece kendi şubesini görebilen kısıtlı ortaklar
@@ -71,6 +71,46 @@ type Kayit = {
   foto_url: string | null;
 };
 
+type Musteri = {
+  id: number;
+  firma_adi: string;
+  tip: "aylik" | "proje";
+  tutar: number;
+  baslangic_tarihi: string;
+  odeme_gunu: number | null;
+  is_tanimi: string | null;
+  sehir: string;
+  iletisim_kisi: string | null;
+  iletisim_telefon: string | null;
+  aktif: boolean;
+  notlar: string | null;
+  ekleyen_ortak: string;
+  olusturma: string;
+};
+
+type Odeme = {
+  id: number;
+  musteri_id: number;
+  donem: string;
+  beklenen_tutar: number;
+  odenen_tutar: number;
+  odeme_tarihi: string | null;
+  durum: "bekliyor" | "kismi" | "tamamlandi" | "iptal";
+  aciklama: string | null;
+  olusturma: string;
+};
+
+const donemEtiket = (donem: string) => {
+  const [yil, ay] = donem.split("-");
+  const aylar = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+  return `${aylar[parseInt(ay) - 1]} ${yil}`;
+};
+
+const suAnkiDonem = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
 const formatTL = (n: number) => new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + " ₺";
 const formatDate = (iso: string) => new Date(iso).toLocaleDateString("tr-TR", { day: "2-digit", month: "short", year: "numeric" });
 const todayISO = () => new Date().toISOString().split("T")[0];
@@ -98,6 +138,34 @@ export default function HomePage() {
   const [filtreSehir, setFiltreSehir] = useState("Hepsi");
   const [filtreOrtak, setFiltreOrtak] = useState("Hepsi");
   const [filtreDonem, setFiltreDonem] = useState("bu_ay");
+
+  // Sekme sistemi
+  const [aktifSekme, setAktifSekme] = useState<"kasa" | "musteriler">("kasa");
+
+  // Müşteriler
+  const [musteriler, setMusteriler] = useState<Musteri[]>([]);
+  const [odemeler, setOdemeler] = useState<Odeme[]>([]);
+  const [musteriModalOpen, setMusteriModalOpen] = useState(false);
+  const [duzenlenenMusteri, setDuzenlenenMusteri] = useState<Musteri | null>(null);
+  const [musteriForm, setMusteriForm] = useState({
+    firma_adi: "",
+    tip: "aylik" as "aylik" | "proje",
+    tutar: "",
+    baslangic_tarihi: todayISO(),
+    odeme_gunu: "1",
+    is_tanimi: "",
+    sehir: "İstanbul",
+    iletisim_kisi: "",
+    iletisim_telefon: "",
+    notlar: "",
+  });
+
+  // Ödeme modalı
+  const [odemeModalOpen, setOdemeModalOpen] = useState(false);
+  const [secilenOdeme, setSecilenOdeme] = useState<Odeme | null>(null);
+  const [odemeTutari, setOdemeTutari] = useState("");
+  const [odemeTarihi, setOdemeTarihi] = useState(todayISO());
+  const [odemeAciklama, setOdemeAciklama] = useState("");
 
   const [form, setForm] = useState({
     tip: "gider" as "gider" | "gelir",
@@ -130,19 +198,66 @@ export default function HomePage() {
 
   const verileriYukle = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("kayitlar")
-      .select("*")
-      .order("tarih", { ascending: false })
-      .order("olusturma", { ascending: false });
+    const [kayitlarRes, musterilerRes, odemelerRes] = await Promise.all([
+      supabase.from("kayitlar").select("*").order("tarih", { ascending: false }).order("olusturma", { ascending: false }),
+      supabase.from("musteriler").select("*").order("firma_adi"),
+      supabase.from("odemeler").select("*").order("donem", { ascending: false }),
+    ]);
     
-    if (error) {
-      console.error(error);
-      alert("Veriler yüklenemedi: " + error.message);
+    if (kayitlarRes.error) {
+      console.error(kayitlarRes.error);
     } else {
-      setKayitlar(data || []);
+      setKayitlar(kayitlarRes.data || []);
     }
+
+    if (musterilerRes.error) {
+      console.error(musterilerRes.error);
+    } else {
+      setMusteriler(musterilerRes.data || []);
+      // Aktif aylık müşteriler için bu ayın ödemesi yoksa otomatik oluştur
+      await otomatikOdemeOlustur(musterilerRes.data || [], odemelerRes.data || []);
+    }
+
+    if (odemelerRes.error) {
+      console.error(odemelerRes.error);
+    } else {
+      // Ödemeleri tekrar yükle (yeni eklenenler olabilir)
+      const { data: guncelOdemeler } = await supabase.from("odemeler").select("*").order("donem", { ascending: false });
+      setOdemeler(guncelOdemeler || []);
+    }
+    
     setLoading(false);
+  };
+
+  const otomatikOdemeOlustur = async (musterilerList: Musteri[], odemelerList: Odeme[]) => {
+    const buAy = suAnkiDonem();
+    const eklenecekler = [];
+    
+    for (const m of musterilerList) {
+      if (!m.aktif || m.tip !== "aylik") continue;
+      
+      // Bu ayın başlangıcına göre çalışmaya başlamış mı?
+      const baslangic = new Date(m.baslangic_tarihi);
+      const simdi = new Date();
+      const baslangicDonemi = `${baslangic.getFullYear()}-${String(baslangic.getMonth() + 1).padStart(2, "0")}`;
+      
+      if (baslangicDonemi > buAy) continue;
+      
+      // Bu müşteri için bu ay ödeme kaydı var mı?
+      const varMi = odemelerList.some(o => o.musteri_id === m.id && o.donem === buAy);
+      if (!varMi) {
+        eklenecekler.push({
+          musteri_id: m.id,
+          donem: buAy,
+          beklenen_tutar: m.tutar,
+          durum: "bekliyor" as const,
+        });
+      }
+    }
+    
+    if (eklenecekler.length > 0) {
+      await supabase.from("odemeler").insert(eklenecekler);
+    }
   };
 
   const girisYap = async () => {
@@ -328,6 +443,158 @@ export default function HomePage() {
     setFotoPreview(null);
   };
 
+  // ========== MÜŞTERİ İŞLEMLERİ ==========
+  
+  const musteriKaydet = async () => {
+    if (!musteriForm.firma_adi || !musteriForm.tutar) {
+      alert("Firma adı ve tutar zorunludur");
+      return;
+    }
+
+    const veri = {
+      firma_adi: musteriForm.firma_adi,
+      tip: musteriForm.tip,
+      tutar: parseFloat(musteriForm.tutar),
+      baslangic_tarihi: musteriForm.baslangic_tarihi,
+      odeme_gunu: musteriForm.tip === "aylik" ? parseInt(musteriForm.odeme_gunu) : null,
+      is_tanimi: musteriForm.is_tanimi || null,
+      sehir: musteriForm.sehir,
+      iletisim_kisi: musteriForm.iletisim_kisi || null,
+      iletisim_telefon: musteriForm.iletisim_telefon || null,
+      notlar: musteriForm.notlar || null,
+      ekleyen_ortak: giris!,
+    };
+
+    if (duzenlenenMusteri) {
+      const { error } = await supabase.from("musteriler").update(veri).eq("id", duzenlenenMusteri.id);
+      if (error) { alert("Güncellenemedi: " + error.message); return; }
+    } else {
+      const { data, error } = await supabase.from("musteriler").insert(veri).select().single();
+      if (error) { alert("Eklenemedi: " + error.message); return; }
+      
+      // Aylık ise bu ay için otomatik ödeme oluştur
+      if (data && musteriForm.tip === "aylik") {
+        const buAy = suAnkiDonem();
+        const baslangic = new Date(musteriForm.baslangic_tarihi);
+        const baslangicDonemi = `${baslangic.getFullYear()}-${String(baslangic.getMonth() + 1).padStart(2, "0")}`;
+        if (baslangicDonemi <= buAy) {
+          await supabase.from("odemeler").insert({
+            musteri_id: data.id,
+            donem: buAy,
+            beklenen_tutar: parseFloat(musteriForm.tutar),
+            durum: "bekliyor",
+          });
+        }
+      }
+      // Proje ise tek ödeme oluştur
+      if (data && musteriForm.tip === "proje") {
+        const baslangic = new Date(musteriForm.baslangic_tarihi);
+        const donem = `${baslangic.getFullYear()}-${String(baslangic.getMonth() + 1).padStart(2, "0")}`;
+        await supabase.from("odemeler").insert({
+          musteri_id: data.id,
+          donem: donem,
+          beklenen_tutar: parseFloat(musteriForm.tutar),
+          durum: "bekliyor",
+        });
+      }
+    }
+
+    await verileriYukle();
+    setMusteriModalOpen(false);
+    setDuzenlenenMusteri(null);
+    setMusteriForm({
+      firma_adi: "",
+      tip: "aylik",
+      tutar: "",
+      baslangic_tarihi: todayISO(),
+      odeme_gunu: "1",
+      is_tanimi: "",
+      sehir: "İstanbul",
+      iletisim_kisi: "",
+      iletisim_telefon: "",
+      notlar: "",
+    });
+  };
+
+  const musteriDuzenle = (m: Musteri) => {
+    setDuzenlenenMusteri(m);
+    setMusteriForm({
+      firma_adi: m.firma_adi,
+      tip: m.tip,
+      tutar: String(m.tutar),
+      baslangic_tarihi: m.baslangic_tarihi,
+      odeme_gunu: String(m.odeme_gunu || 1),
+      is_tanimi: m.is_tanimi || "",
+      sehir: m.sehir,
+      iletisim_kisi: m.iletisim_kisi || "",
+      iletisim_telefon: m.iletisim_telefon || "",
+      notlar: m.notlar || "",
+    });
+    setMusteriModalOpen(true);
+  };
+
+  const musteriSil = async (m: Musteri) => {
+    if (!confirm(`"${m.firma_adi}" firmasını ve tüm ödeme kayıtlarını silmek istediğine emin misin?`)) return;
+    const { error } = await supabase.from("musteriler").delete().eq("id", m.id);
+    if (error) { alert("Silinemedi: " + error.message); return; }
+    await verileriYukle();
+  };
+
+  const musteriPasifEt = async (m: Musteri) => {
+    if (!confirm(`"${m.firma_adi}" firmasını pasife alıyorsun. Geçmişi kalır ama yeni aylık ödeme oluşmaz. Emin misin?`)) return;
+    const { error } = await supabase.from("musteriler").update({ aktif: !m.aktif }).eq("id", m.id);
+    if (error) { alert("Güncellenemedi: " + error.message); return; }
+    await verileriYukle();
+  };
+
+  // ========== ÖDEME İŞLEMLERİ ==========
+
+  const odemeModalAc = (o: Odeme) => {
+    setSecilenOdeme(o);
+    setOdemeTutari(String(o.beklenen_tutar - o.odenen_tutar));
+    setOdemeTarihi(todayISO());
+    setOdemeAciklama(o.aciklama || "");
+    setOdemeModalOpen(true);
+  };
+
+  const odemeKaydet = async () => {
+    if (!secilenOdeme) return;
+    const girilen = parseFloat(odemeTutari);
+    if (isNaN(girilen) || girilen <= 0) {
+      alert("Geçerli bir tutar gir");
+      return;
+    }
+
+    const yeniOdenen = Number(secilenOdeme.odenen_tutar) + girilen;
+    let yeniDurum: "bekliyor" | "kismi" | "tamamlandi" = "bekliyor";
+    if (yeniOdenen >= Number(secilenOdeme.beklenen_tutar)) yeniDurum = "tamamlandi";
+    else if (yeniOdenen > 0) yeniDurum = "kismi";
+
+    const { error } = await supabase.from("odemeler").update({
+      odenen_tutar: yeniOdenen,
+      odeme_tarihi: odemeTarihi,
+      durum: yeniDurum,
+      aciklama: odemeAciklama || null,
+    }).eq("id", secilenOdeme.id);
+
+    if (error) { alert("Kaydedilemedi: " + error.message); return; }
+    await verileriYukle();
+    setOdemeModalOpen(false);
+    setSecilenOdeme(null);
+  };
+
+  const odemeSifirla = async (o: Odeme) => {
+    if (!confirm("Bu ödeme kaydını sıfırlamak istediğine emin misin? (Ödeme tutarı 0'a döner)")) return;
+    const { error } = await supabase.from("odemeler").update({
+      odenen_tutar: 0,
+      odeme_tarihi: null,
+      durum: "bekliyor",
+      aciklama: null,
+    }).eq("id", o.id);
+    if (error) { alert("Sıfırlanamadı: " + error.message); return; }
+    await verileriYukle();
+  };
+
   const kayitSil = async (id: number, kayitOrtak: string, foto_url: string | null) => {
     if (kayitOrtak !== giris) {
       alert(`Bu kayıt ${kayitOrtak} tarafından eklendi. Sadece kendi kayıtlarınızı silebilirsiniz.`);
@@ -447,6 +714,100 @@ export default function HomePage() {
       aylik: hesapla(ayBasi),
     };
   }, [kayitlar, giris]);
+
+  // Müşteri bazlı filtreleme
+  const gorunenMusteriler = useMemo(() => {
+    const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
+    return musteriler.filter(m => {
+      if (kisitliSube && m.sehir !== kisitliSube) return false;
+      return true;
+    });
+  }, [musteriler, giris]);
+
+  // Ciro özeti
+  const ciroOzeti = useMemo(() => {
+    const aylikAktif = gorunenMusteriler.filter(m => m.aktif && m.tip === "aylik");
+    const toplamAylikCiro = aylikAktif.reduce((s, m) => s + Number(m.tutar), 0);
+    const aktifMusteriSayisi = gorunenMusteriler.filter(m => m.aktif).length;
+    const pasifMusteriSayisi = gorunenMusteriler.filter(m => !m.aktif).length;
+    return { toplamAylikCiro, aktifMusteriSayisi, pasifMusteriSayisi };
+  }, [gorunenMusteriler]);
+
+  // Bu ay ödeme durumu
+  const buAyOdemeleri = useMemo(() => {
+    const buAy = suAnkiDonem();
+    const gorunenMusteriIds = new Set(gorunenMusteriler.map(m => m.id));
+    const buAyOdemeler = odemeler.filter(o => o.donem === buAy && gorunenMusteriIds.has(o.musteri_id));
+    const beklenen = buAyOdemeler.reduce((s, o) => s + Number(o.beklenen_tutar), 0);
+    const alinan = buAyOdemeler.reduce((s, o) => s + Number(o.odenen_tutar), 0);
+    return { beklenen, alinan, kalan: beklenen - alinan, sayi: buAyOdemeler.length };
+  }, [odemeler, gorunenMusteriler]);
+
+  // Gecikmiş ödemeler
+  const gecikmisOdemeler = useMemo(() => {
+    const simdi = new Date();
+    const gorunenMusteriMap = new Map(gorunenMusteriler.map(m => [m.id, m]));
+    
+    return odemeler
+      .filter(o => {
+        const m = gorunenMusteriMap.get(o.musteri_id);
+        if (!m) return false;
+        if (o.durum === "tamamlandi" || o.durum === "iptal") return false;
+        
+        // Ödeme günü geçmiş mi?
+        const [yil, ay] = o.donem.split("-");
+        if (m.tip === "aylik" && m.odeme_gunu) {
+          const odemeGunTarihi = new Date(parseInt(yil), parseInt(ay) - 1, m.odeme_gunu);
+          return simdi > odemeGunTarihi;
+        }
+        // Proje ise başlangıç tarihi geçmişse
+        if (m.tip === "proje") {
+          return new Date(m.baslangic_tarihi) < simdi;
+        }
+        return false;
+      })
+      .map(o => {
+        const m = gorunenMusteriMap.get(o.musteri_id)!;
+        const [yil, ay] = o.donem.split("-");
+        const odemeGunTarihi = m.tip === "aylik" && m.odeme_gunu
+          ? new Date(parseInt(yil), parseInt(ay) - 1, m.odeme_gunu)
+          : new Date(m.baslangic_tarihi);
+        const gecikmeGunu = Math.floor((simdi.getTime() - odemeGunTarihi.getTime()) / (1000 * 60 * 60 * 24));
+        return { odeme: o, musteri: m, gecikmeGunu };
+      })
+      .sort((a, b) => b.gecikmeGunu - a.gecikmeGunu);
+  }, [odemeler, gorunenMusteriler]);
+
+  // Yaklaşan ödemeler (7 gün içinde)
+  const yaklasanOdemeler = useMemo(() => {
+    const simdi = new Date();
+    const yediGunSonra = new Date();
+    yediGunSonra.setDate(yediGunSonra.getDate() + 7);
+    const gorunenMusteriMap = new Map(gorunenMusteriler.map(m => [m.id, m]));
+    
+    return odemeler
+      .filter(o => {
+        const m = gorunenMusteriMap.get(o.musteri_id);
+        if (!m) return false;
+        if (o.durum === "tamamlandi" || o.durum === "iptal") return false;
+        
+        const [yil, ay] = o.donem.split("-");
+        if (m.tip === "aylik" && m.odeme_gunu) {
+          const odemeGunTarihi = new Date(parseInt(yil), parseInt(ay) - 1, m.odeme_gunu);
+          return odemeGunTarihi > simdi && odemeGunTarihi <= yediGunSonra;
+        }
+        return false;
+      })
+      .map(o => {
+        const m = gorunenMusteriMap.get(o.musteri_id)!;
+        const [yil, ay] = o.donem.split("-");
+        const odemeGunTarihi = new Date(parseInt(yil), parseInt(ay) - 1, m.odeme_gunu!);
+        const kalanGun = Math.ceil((odemeGunTarihi.getTime() - simdi.getTime()) / (1000 * 60 * 60 * 24));
+        return { odeme: o, musteri: m, kalanGun };
+      })
+      .sort((a, b) => a.kalanGun - b.kalanGun);
+  }, [odemeler, gorunenMusteriler]);
+
 
   const exportCSV = () => {
     const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
@@ -572,6 +933,33 @@ export default function HomePage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        {/* Sekmeler */}
+        <div className="flex gap-1 bg-white border border-stone-200 p-1 rounded-xl w-fit">
+          <button
+            onClick={() => setAktifSekme("kasa")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+              aktifSekme === "kasa" ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
+            }`}
+          >
+            <Wallet className="w-4 h-4" /> Kasa
+          </button>
+          <button
+            onClick={() => setAktifSekme("musteriler")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+              aktifSekme === "musteriler" ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
+            }`}
+          >
+            <Briefcase className="w-4 h-4" /> Müşteriler
+            {gecikmisOdemeler.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 bg-rose-500 text-white text-xs rounded-full">
+                {gecikmisOdemeler.length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {aktifSekme === "kasa" && (
+        <>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {[
             { etiket: "Bugün", veri: hizliOzet.gunluk },
@@ -807,6 +1195,286 @@ export default function HomePage() {
             </div>
           )}
         </div>
+        </>
+        )}
+
+        {aktifSekme === "musteriler" && (
+        <>
+          {/* Ciro Özet Kartları */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 text-white rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-indigo-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <DollarSign className="w-4 h-4" /> Toplam Aylık Ciro
+              </div>
+              <div className="text-3xl font-bold">{formatTL(ciroOzeti.toplamAylikCiro)}</div>
+              <div className="text-xs text-indigo-100 mt-2">{ciroOzeti.aktifMusteriSayisi} aktif müşteri</div>
+            </div>
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-emerald-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <CheckCircle2 className="w-4 h-4" /> Bu Ay Tahsil Edilen
+              </div>
+              <div className="text-3xl font-bold">{formatTL(buAyOdemeleri.alinan)}</div>
+              <div className="text-xs text-emerald-100 mt-2">{formatTL(buAyOdemeleri.beklenen)} beklenen</div>
+            </div>
+            <div className={`${buAyOdemeleri.kalan > 0 ? "bg-gradient-to-br from-amber-500 to-amber-600" : "bg-gradient-to-br from-stone-700 to-stone-800"} text-white rounded-xl p-5 shadow-sm`}>
+              <div className="flex items-center gap-2 text-amber-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <Clock className="w-4 h-4" /> Bu Ay Kalan Tahsilat
+              </div>
+              <div className="text-3xl font-bold">{formatTL(buAyOdemeleri.kalan)}</div>
+              <div className="text-xs text-amber-100 mt-2">{buAyOdemeleri.sayi} ödeme takipte</div>
+            </div>
+          </div>
+
+          {/* Gecikmiş Ödemeler */}
+          {gecikmisOdemeler.length > 0 && (
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertCircle className="w-5 h-5 text-rose-600" />
+                <h3 className="font-bold text-rose-900">GECİKMİŞ ÖDEMELER ({gecikmisOdemeler.length})</h3>
+              </div>
+              <div className="space-y-2">
+                {gecikmisOdemeler.map(({ odeme, musteri, gecikmeGunu }) => {
+                  const kalan = Number(odeme.beklenen_tutar) - Number(odeme.odenen_tutar);
+                  return (
+                    <div key={odeme.id} className="bg-white border border-rose-200 rounded-lg p-3 flex items-center justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-stone-900 text-sm">{musteri.firma_adi}</div>
+                        <div className="text-xs text-rose-600 font-medium">
+                          {gecikmeGunu} gündür gecikmiş · {donemEtiket(odeme.donem)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-rose-600">{formatTL(kalan)}</div>
+                        {odeme.durum === "kismi" && (
+                          <div className="text-xs text-stone-500">Yarı ödendi</div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => odemeModalAc(odeme)}
+                        className="px-3 py-1.5 bg-rose-600 text-white text-xs font-semibold rounded-lg hover:bg-rose-700 transition"
+                      >
+                        Ödeme Al
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Yaklaşan Ödemeler */}
+          {yaklasanOdemeler.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Clock className="w-5 h-5 text-amber-600" />
+                <h3 className="font-bold text-amber-900">YAKLAŞAN ÖDEMELER (7 gün)</h3>
+              </div>
+              <div className="space-y-2">
+                {yaklasanOdemeler.map(({ odeme, musteri, kalanGun }) => {
+                  const kalan = Number(odeme.beklenen_tutar) - Number(odeme.odenen_tutar);
+                  return (
+                    <div key={odeme.id} className="bg-white border border-amber-200 rounded-lg p-3 flex items-center justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-stone-900 text-sm">{musteri.firma_adi}</div>
+                        <div className="text-xs text-amber-700 font-medium">
+                          {kalanGun} gün sonra · {musteri.odeme_gunu}. gün
+                        </div>
+                      </div>
+                      <div className="font-bold text-amber-700">{formatTL(kalan)}</div>
+                      <button
+                        onClick={() => odemeModalAc(odeme)}
+                        className="px-3 py-1.5 bg-amber-600 text-white text-xs font-semibold rounded-lg hover:bg-amber-700 transition"
+                      >
+                        Ödeme Al
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Yeni Müşteri Butonu */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => { 
+                setDuzenlenenMusteri(null);
+                setMusteriForm({
+                  firma_adi: "",
+                  tip: "aylik",
+                  tutar: "",
+                  baslangic_tarihi: todayISO(),
+                  odeme_gunu: "1",
+                  is_tanimi: "",
+                  sehir: giris && SUBE_KISITLI_ORTAKLAR[giris] ? SUBE_KISITLI_ORTAKLAR[giris] : "İstanbul",
+                  iletisim_kisi: "",
+                  iletisim_telefon: "",
+                  notlar: "",
+                });
+                setMusteriModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-lg text-sm font-medium hover:bg-stone-800 transition shadow-sm"
+            >
+              <Plus className="w-4 h-4" /> Yeni Müşteri
+            </button>
+          </div>
+
+          {/* Müşteri Listesi */}
+          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-stone-200">
+              <h3 className="font-semibold text-stone-900">
+                Müşteriler ({gorunenMusteriler.length})
+              </h3>
+            </div>
+            {gorunenMusteriler.length === 0 ? (
+              <div className="p-12 text-center">
+                <Briefcase className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+                <p className="text-stone-400 text-sm">Henüz müşteri eklenmemiş</p>
+                <p className="text-stone-400 text-xs mt-1">Yukarıdaki "Yeni Müşteri" butonuna basarak başla</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-stone-100">
+                {gorunenMusteriler.map((m) => {
+                  const musteriOdemeleri = odemeler.filter(o => o.musteri_id === m.id);
+                  const toplamBeklenen = musteriOdemeleri.reduce((s, o) => s + Number(o.beklenen_tutar), 0);
+                  const toplamAlinan = musteriOdemeleri.reduce((s, o) => s + Number(o.odenen_tutar), 0);
+                  const aktifOdeme = musteriOdemeleri.find(o => o.durum !== "tamamlandi" && o.durum !== "iptal");
+                  
+                  return (
+                    <div key={m.id} className={`p-4 ${!m.aktif ? "opacity-60" : ""}`}>
+                      <div className="flex items-start gap-3 mb-2">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                          m.tip === "aylik" ? "bg-indigo-100 text-indigo-700" : "bg-purple-100 text-purple-700"
+                        }`}>
+                          <Briefcase className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-stone-900">{m.firma_adi}</h4>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                              m.tip === "aylik" ? "bg-indigo-100 text-indigo-700" : "bg-purple-100 text-purple-700"
+                            }`}>
+                              {m.tip === "aylik" ? "Aylık Sabit" : "Proje"}
+                            </span>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-stone-100 text-stone-600">
+                              {m.sehir}
+                            </span>
+                            {!m.aktif && (
+                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-rose-100 text-rose-700">
+                                PASİF
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xl font-bold text-stone-900 mt-1">
+                            {formatTL(Number(m.tutar))}
+                            <span className="text-xs font-normal text-stone-500 ml-1">
+                              {m.tip === "aylik" ? `/ ay · Her ayın ${m.odeme_gunu}. günü` : "tek seferlik"}
+                            </span>
+                          </div>
+                          {m.is_tanimi && (
+                            <p className="text-xs text-stone-600 mt-2 italic">"{m.is_tanimi}"</p>
+                          )}
+                          {(m.iletisim_kisi || m.iletisim_telefon) && (
+                            <div className="flex items-center gap-3 text-xs text-stone-500 mt-2">
+                              {m.iletisim_kisi && <span>{m.iletisim_kisi}</span>}
+                              {m.iletisim_telefon && (
+                                <a href={`tel:${m.iletisim_telefon}`} className="flex items-center gap-1 text-blue-600 hover:underline">
+                                  <Phone className="w-3 h-3" /> {m.iletisim_telefon}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <button
+                            onClick={() => musteriDuzenle(m)}
+                            className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg transition"
+                            title="Düzenle"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => musteriPasifEt(m)}
+                            className="p-2 text-stone-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
+                            title={m.aktif ? "Pasife al" : "Aktifleştir"}
+                          >
+                            {m.aktif ? <X className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                          </button>
+                          <button
+                            onClick={() => musteriSil(m)}
+                            className="p-2 text-stone-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="Sil"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Ödeme Geçmişi */}
+                      {musteriOdemeleri.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-stone-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">
+                              Ödeme Geçmişi
+                            </span>
+                            <span className="text-xs text-stone-500">
+                              {formatTL(toplamAlinan)} / {formatTL(toplamBeklenen)}
+                            </span>
+                          </div>
+                          <div className="space-y-1.5">
+                            {musteriOdemeleri.slice(0, 5).map((o) => {
+                              const kalan = Number(o.beklenen_tutar) - Number(o.odenen_tutar);
+                              return (
+                                <div key={o.id} className="flex items-center gap-2 p-2 bg-stone-50 rounded-lg text-xs">
+                                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                    o.durum === "tamamlandi" ? "bg-emerald-500" :
+                                    o.durum === "kismi" ? "bg-amber-500" :
+                                    o.durum === "iptal" ? "bg-stone-400" :
+                                    "bg-rose-500"
+                                  }`} />
+                                  <span className="font-semibold text-stone-700 w-24">{donemEtiket(o.donem)}</span>
+                                  <span className="text-stone-500 flex-1">
+                                    {o.durum === "tamamlandi" ? "✓ Tamamen ödendi" :
+                                     o.durum === "kismi" ? `${formatTL(Number(o.odenen_tutar))} ödendi, ${formatTL(kalan)} kaldı` :
+                                     o.durum === "iptal" ? "İptal" :
+                                     `${formatTL(Number(o.beklenen_tutar))} bekleniyor`}
+                                  </span>
+                                  {o.durum !== "tamamlandi" && o.durum !== "iptal" && (
+                                    <button
+                                      onClick={() => odemeModalAc(o)}
+                                      className="px-2 py-1 bg-stone-900 text-white text-xs font-semibold rounded hover:bg-stone-800"
+                                    >
+                                      Ödeme Al
+                                    </button>
+                                  )}
+                                  {o.durum === "tamamlandi" && (
+                                    <button
+                                      onClick={() => odemeSifirla(o)}
+                                      className="px-2 py-1 text-stone-500 hover:text-stone-900 text-xs"
+                                      title="Sıfırla"
+                                    >
+                                      ↻
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {musteriOdemeleri.length > 5 && (
+                              <p className="text-xs text-stone-400 text-center mt-1">
+                                +{musteriOdemeleri.length - 5} eski ödeme daha
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+        )}
       </main>
 
       {modalOpen && (
@@ -1023,6 +1691,232 @@ export default function HomePage() {
               >
                 {sifreYukleniyor ? <><Loader2 className="w-4 h-4 animate-spin" /> Güncelleniyor...</> : "Şifreyi Değiştir"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MÜŞTERİ EKLE/DÜZENLE MODAL */}
+      {musteriModalOpen && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-lg max-h-[95vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-stone-900">
+                {duzenlenenMusteri ? "Müşteri Düzenle" : "Yeni Müşteri"}
+              </h2>
+              <button onClick={() => { setMusteriModalOpen(false); setDuzenlenenMusteri(null); }} className="p-1 hover:bg-stone-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Firma Adı</label>
+                <input
+                  type="text"
+                  value={musteriForm.firma_adi}
+                  onChange={(e) => setMusteriForm({ ...musteriForm, firma_adi: e.target.value })}
+                  placeholder="Örn: X Kliniği"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Ödeme Tipi</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setMusteriForm({ ...musteriForm, tip: "aylik" })}
+                    className={`py-3 rounded-lg font-semibold text-sm transition ${musteriForm.tip === "aylik" ? "bg-indigo-500 text-white" : "bg-stone-100 text-stone-600"}`}>
+                    Aylık Sabit
+                  </button>
+                  <button onClick={() => setMusteriForm({ ...musteriForm, tip: "proje" })}
+                    className={`py-3 rounded-lg font-semibold text-sm transition ${musteriForm.tip === "proje" ? "bg-purple-500 text-white" : "bg-stone-100 text-stone-600"}`}>
+                    Proje Bazlı
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
+                  {musteriForm.tip === "aylik" ? "Aylık Ücret (₺)" : "Proje Bedeli (₺)"}
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={musteriForm.tutar}
+                  onChange={(e) => setMusteriForm({ ...musteriForm, tutar: e.target.value })}
+                  placeholder="0,00"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-xl font-bold text-stone-900 focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
+                  {musteriForm.tip === "aylik" ? "Sözleşme Başlangıç Tarihi" : "Proje Tarihi"}
+                </label>
+                <input
+                  type="date"
+                  value={musteriForm.baslangic_tarihi}
+                  onChange={(e) => setMusteriForm({ ...musteriForm, baslangic_tarihi: e.target.value })}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              {musteriForm.tip === "aylik" && (
+                <div>
+                  <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Her Ayın Kaçıncı Günü Ödenecek?</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={musteriForm.odeme_gunu}
+                    onChange={(e) => setMusteriForm({ ...musteriForm, odeme_gunu: e.target.value })}
+                    placeholder="Örn: 15"
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">İş Tanımı (opsiyonel)</label>
+                <textarea
+                  value={musteriForm.is_tanimi}
+                  onChange={(e) => setMusteriForm({ ...musteriForm, is_tanimi: e.target.value })}
+                  placeholder="Örn: Aylık 20 reel, 10 story, 2 çekim, logo güncellemesi"
+                  rows={3}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400 resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Şube</label>
+                {giris && SUBE_KISITLI_ORTAKLAR[giris] ? (
+                  <div className="px-4 py-3 bg-stone-100 rounded-lg text-sm text-stone-700 font-semibold">
+                    {SUBE_KISITLI_ORTAKLAR[giris]} (sabit)
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {SUBELER.map((s) => (
+                      <button key={s} onClick={() => setMusteriForm({ ...musteriForm, sehir: s })}
+                        className={`py-3 rounded-lg font-semibold text-sm transition ${musteriForm.sehir === s ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-600"}`}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">İletişim Kişisi (opsiyonel)</label>
+                <input
+                  type="text"
+                  value={musteriForm.iletisim_kisi}
+                  onChange={(e) => setMusteriForm({ ...musteriForm, iletisim_kisi: e.target.value })}
+                  placeholder="Örn: Ahmet Bey"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Telefon (opsiyonel)</label>
+                <input
+                  type="tel"
+                  value={musteriForm.iletisim_telefon}
+                  onChange={(e) => setMusteriForm({ ...musteriForm, iletisim_telefon: e.target.value })}
+                  placeholder="0555 555 5555"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Notlar (opsiyonel)</label>
+                <textarea
+                  value={musteriForm.notlar}
+                  onChange={(e) => setMusteriForm({ ...musteriForm, notlar: e.target.value })}
+                  placeholder="Önemli notlar, özel istekler..."
+                  rows={2}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-white border-t border-stone-200 p-4 flex gap-2">
+              <button onClick={() => { setMusteriModalOpen(false); setDuzenlenenMusteri(null); }} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200 transition">İptal</button>
+              <button onClick={musteriKaydet} className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition">
+                {duzenlenenMusteri ? "Güncelle" : "Kaydet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ÖDEME ALMA MODAL */}
+      {odemeModalOpen && secilenOdeme && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-md max-h-[95vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-stone-900">Ödeme Al</h2>
+              <button onClick={() => setOdemeModalOpen(false)} className="p-1 hover:bg-stone-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-stone-50 p-4 rounded-lg">
+                <div className="text-xs text-stone-500 uppercase tracking-wider font-semibold mb-1">
+                  {donemEtiket(secilenOdeme.donem)}
+                </div>
+                <div className="text-sm text-stone-600">Beklenen: <span className="font-bold">{formatTL(Number(secilenOdeme.beklenen_tutar))}</span></div>
+                <div className="text-sm text-stone-600">Şu ana kadar ödenen: <span className="font-bold text-emerald-600">{formatTL(Number(secilenOdeme.odenen_tutar))}</span></div>
+                <div className="text-sm text-stone-600">Kalan: <span className="font-bold text-rose-600">{formatTL(Number(secilenOdeme.beklenen_tutar) - Number(secilenOdeme.odenen_tutar))}</span></div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Alınan Tutar (₺)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={odemeTutari}
+                  onChange={(e) => setOdemeTutari(e.target.value)}
+                  placeholder="0,00"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-xl font-bold focus:outline-none focus:border-stone-400"
+                  autoFocus
+                />
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => setOdemeTutari(String(Number(secilenOdeme.beklenen_tutar) - Number(secilenOdeme.odenen_tutar)))}
+                    className="flex-1 py-2 bg-stone-100 text-stone-700 rounded-lg text-xs font-semibold hover:bg-stone-200">
+                    Tamamı
+                  </button>
+                  <button onClick={() => setOdemeTutari(String((Number(secilenOdeme.beklenen_tutar) - Number(secilenOdeme.odenen_tutar)) / 2))}
+                    className="flex-1 py-2 bg-stone-100 text-stone-700 rounded-lg text-xs font-semibold hover:bg-stone-200">
+                    Yarısı
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Ödeme Tarihi</label>
+                <input
+                  type="date"
+                  value={odemeTarihi}
+                  onChange={(e) => setOdemeTarihi(e.target.value)}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Açıklama (opsiyonel)</label>
+                <input
+                  type="text"
+                  value={odemeAciklama}
+                  onChange={(e) => setOdemeAciklama(e.target.value)}
+                  placeholder="Örn: Havale - Ziraat Bankası"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+            </div>
+            <div className="sticky bottom-0 bg-white border-t border-stone-200 p-4 flex gap-2">
+              <button onClick={() => setOdemeModalOpen(false)} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200">İptal</button>
+              <button onClick={odemeKaydet} className="flex-1 py-3 bg-emerald-600 text-white rounded-lg font-semibold text-sm hover:bg-emerald-700">Ödemeyi Kaydet</button>
             </div>
           </div>
         </div>
