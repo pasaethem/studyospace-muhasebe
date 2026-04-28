@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield, Briefcase, Clock, CheckCircle2, AlertCircle, DollarSign, Phone, FileText, Edit2 } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield, Briefcase, Clock, CheckCircle2, AlertCircle, DollarSign, Phone, FileText, Edit2, UserCircle, CreditCard } from "lucide-react";
 
 const ORTAKLAR = ["Ethem", "Ferdi", "Aden"];
 const SUBELER = ["İstanbul", "Şanlıurfa"];
@@ -11,6 +11,19 @@ const ADMIN_ORTAK = "Ethem"; // Herkesin şifresini değiştirebilir
 const SUBE_KISITLI_ORTAKLAR: Record<string, string> = {
   "Aden": "Şanlıurfa",
 };
+
+const POZISYONLAR = [
+  "Grafiker",
+  "Videographer",
+  "Meta Reklam Yönetimi",
+  "Kreatif Director",
+  "Sosyal Medya Uzmanı",
+  "Ofis Ablası",
+  "Küçük Ortak",
+  "Kurgucu",
+  "Asistan",
+  "Stajyer",
+];
 
 const GIDER_KATEGORILERI: Record<string, string[]> = {
   "Çekim & Prodüksiyon": [
@@ -100,6 +113,34 @@ type Odeme = {
   olusturma: string;
 };
 
+type Calisan = {
+  id: number;
+  ad_soyad: string;
+  pozisyon: string;
+  maas: number;
+  baslangic_tarihi: string;
+  odeme_gunu: number;
+  telefon: string | null;
+  iban: string | null;
+  sehir: string;
+  aktif: boolean;
+  notlar: string | null;
+  ekleyen_ortak: string;
+  olusturma: string;
+};
+
+type MaasOdemesi = {
+  id: number;
+  calisan_id: number;
+  donem: string;
+  beklenen_tutar: number;
+  odenen_tutar: number;
+  son_odeme_tarihi: string | null;
+  durum: "bekliyor" | "kismi" | "tamamlandi" | "iptal";
+  aciklama: string | null;
+  olusturma: string;
+};
+
 const donemEtiket = (donem: string) => {
   const [yil, ay] = donem.split("-");
   const aylar = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
@@ -140,7 +181,7 @@ export default function HomePage() {
   const [filtreDonem, setFiltreDonem] = useState("bu_ay");
 
   // Sekme sistemi
-  const [aktifSekme, setAktifSekme] = useState<"kasa" | "musteriler">("kasa");
+  const [aktifSekme, setAktifSekme] = useState<"kasa" | "musteriler" | "calisanlar">("kasa");
 
   // Müşteriler
   const [musteriler, setMusteriler] = useState<Musteri[]>([]);
@@ -166,6 +207,30 @@ export default function HomePage() {
   const [odemeTutari, setOdemeTutari] = useState("");
   const [odemeTarihi, setOdemeTarihi] = useState(todayISO());
   const [odemeAciklama, setOdemeAciklama] = useState("");
+
+  // Çalışanlar
+  const [calisanlar, setCalisanlar] = useState<Calisan[]>([]);
+  const [maasOdemeleri, setMaasOdemeleri] = useState<MaasOdemesi[]>([]);
+  const [calisanModalOpen, setCalisanModalOpen] = useState(false);
+  const [duzenlenenCalisan, setDuzenlenenCalisan] = useState<Calisan | null>(null);
+  const [calisanForm, setCalisanForm] = useState({
+    ad_soyad: "",
+    pozisyon: "Grafiker",
+    maas: "",
+    baslangic_tarihi: todayISO(),
+    odeme_gunu: "1",
+    telefon: "",
+    iban: "",
+    sehir: "İstanbul",
+    notlar: "",
+  });
+
+  // Maaş ödeme modalı
+  const [maasOdemeModalOpen, setMaasOdemeModalOpen] = useState(false);
+  const [secilenMaasOdeme, setSecilenMaasOdeme] = useState<MaasOdemesi | null>(null);
+  const [maasOdemeTutari, setMaasOdemeTutari] = useState("");
+  const [maasOdemeTarihi, setMaasOdemeTarihi] = useState(todayISO());
+  const [maasOdemeAciklama, setMaasOdemeAciklama] = useState("");
 
   const [form, setForm] = useState({
     tip: "gider" as "gider" | "gelir",
@@ -198,10 +263,12 @@ export default function HomePage() {
 
   const verileriYukle = async () => {
     setLoading(true);
-    const [kayitlarRes, musterilerRes, odemelerRes] = await Promise.all([
+    const [kayitlarRes, musterilerRes, odemelerRes, calisanlarRes, maasOdemeleriRes] = await Promise.all([
       supabase.from("kayitlar").select("*").order("tarih", { ascending: false }).order("olusturma", { ascending: false }),
       supabase.from("musteriler").select("*").order("firma_adi"),
       supabase.from("odemeler").select("*").order("donem", { ascending: false }),
+      supabase.from("calisanlar").select("*").order("ad_soyad"),
+      supabase.from("maas_odemeleri").select("*").order("donem", { ascending: false }),
     ]);
     
     if (kayitlarRes.error) {
@@ -214,17 +281,23 @@ export default function HomePage() {
       console.error(musterilerRes.error);
     } else {
       setMusteriler(musterilerRes.data || []);
-      // Aktif aylık müşteriler için bu ayın ödemesi yoksa otomatik oluştur
       await otomatikOdemeOlustur(musterilerRes.data || [], odemelerRes.data || []);
     }
 
-    if (odemelerRes.error) {
-      console.error(odemelerRes.error);
+    if (calisanlarRes.error) {
+      console.error(calisanlarRes.error);
     } else {
-      // Ödemeleri tekrar yükle (yeni eklenenler olabilir)
-      const { data: guncelOdemeler } = await supabase.from("odemeler").select("*").order("donem", { ascending: false });
-      setOdemeler(guncelOdemeler || []);
+      setCalisanlar(calisanlarRes.data || []);
+      await otomatikMaasOlustur(calisanlarRes.data || [], maasOdemeleriRes.data || []);
     }
+
+    // Tüm ödemeleri tekrar yükle (yeni eklenenler olabilir)
+    const [guncelOdemeler, guncelMaaslar] = await Promise.all([
+      supabase.from("odemeler").select("*").order("donem", { ascending: false }),
+      supabase.from("maas_odemeleri").select("*").order("donem", { ascending: false }),
+    ]);
+    setOdemeler(guncelOdemeler.data || []);
+    setMaasOdemeleri(guncelMaaslar.data || []);
     
     setLoading(false);
   };
@@ -235,15 +308,9 @@ export default function HomePage() {
     
     for (const m of musterilerList) {
       if (!m.aktif || m.tip !== "aylik") continue;
-      
-      // Bu ayın başlangıcına göre çalışmaya başlamış mı?
       const baslangic = new Date(m.baslangic_tarihi);
-      const simdi = new Date();
       const baslangicDonemi = `${baslangic.getFullYear()}-${String(baslangic.getMonth() + 1).padStart(2, "0")}`;
-      
       if (baslangicDonemi > buAy) continue;
-      
-      // Bu müşteri için bu ay ödeme kaydı var mı?
       const varMi = odemelerList.some(o => o.musteri_id === m.id && o.donem === buAy);
       if (!varMi) {
         eklenecekler.push({
@@ -257,6 +324,31 @@ export default function HomePage() {
     
     if (eklenecekler.length > 0) {
       await supabase.from("odemeler").insert(eklenecekler);
+    }
+  };
+
+  const otomatikMaasOlustur = async (calisanlarList: Calisan[], maasOdemeleriList: MaasOdemesi[]) => {
+    const buAy = suAnkiDonem();
+    const eklenecekler = [];
+    
+    for (const c of calisanlarList) {
+      if (!c.aktif) continue;
+      const baslangic = new Date(c.baslangic_tarihi);
+      const baslangicDonemi = `${baslangic.getFullYear()}-${String(baslangic.getMonth() + 1).padStart(2, "0")}`;
+      if (baslangicDonemi > buAy) continue;
+      const varMi = maasOdemeleriList.some(m => m.calisan_id === c.id && m.donem === buAy);
+      if (!varMi) {
+        eklenecekler.push({
+          calisan_id: c.id,
+          donem: buAy,
+          beklenen_tutar: c.maas,
+          durum: "bekliyor" as const,
+        });
+      }
+    }
+    
+    if (eklenecekler.length > 0) {
+      await supabase.from("maas_odemeleri").insert(eklenecekler);
     }
   };
 
@@ -595,6 +687,144 @@ export default function HomePage() {
     await verileriYukle();
   };
 
+  // ========== ÇALIŞAN İŞLEMLERİ ==========
+
+  const calisanKaydet = async () => {
+    if (!calisanForm.ad_soyad || !calisanForm.maas) {
+      alert("Ad-Soyad ve maaş zorunludur");
+      return;
+    }
+
+    const veri = {
+      ad_soyad: calisanForm.ad_soyad,
+      pozisyon: calisanForm.pozisyon,
+      maas: parseFloat(calisanForm.maas),
+      baslangic_tarihi: calisanForm.baslangic_tarihi,
+      odeme_gunu: parseInt(calisanForm.odeme_gunu),
+      telefon: calisanForm.telefon || null,
+      iban: calisanForm.iban || null,
+      sehir: calisanForm.sehir,
+      notlar: calisanForm.notlar || null,
+      ekleyen_ortak: giris!,
+    };
+
+    if (duzenlenenCalisan) {
+      const { error } = await supabase.from("calisanlar").update(veri).eq("id", duzenlenenCalisan.id);
+      if (error) { alert("Güncellenemedi: " + error.message); return; }
+    } else {
+      const { data, error } = await supabase.from("calisanlar").insert(veri).select().single();
+      if (error) { alert("Eklenemedi: " + error.message); return; }
+      
+      // Bu ay için otomatik maaş ödemesi oluştur
+      if (data) {
+        const buAy = suAnkiDonem();
+        const baslangic = new Date(calisanForm.baslangic_tarihi);
+        const baslangicDonemi = `${baslangic.getFullYear()}-${String(baslangic.getMonth() + 1).padStart(2, "0")}`;
+        if (baslangicDonemi <= buAy) {
+          await supabase.from("maas_odemeleri").insert({
+            calisan_id: data.id,
+            donem: buAy,
+            beklenen_tutar: parseFloat(calisanForm.maas),
+            durum: "bekliyor",
+          });
+        }
+      }
+    }
+
+    await verileriYukle();
+    setCalisanModalOpen(false);
+    setDuzenlenenCalisan(null);
+    setCalisanForm({
+      ad_soyad: "",
+      pozisyon: "Grafiker",
+      maas: "",
+      baslangic_tarihi: todayISO(),
+      odeme_gunu: "1",
+      telefon: "",
+      iban: "",
+      sehir: "İstanbul",
+      notlar: "",
+    });
+  };
+
+  const calisanDuzenle = (c: Calisan) => {
+    setDuzenlenenCalisan(c);
+    setCalisanForm({
+      ad_soyad: c.ad_soyad,
+      pozisyon: c.pozisyon,
+      maas: String(c.maas),
+      baslangic_tarihi: c.baslangic_tarihi,
+      odeme_gunu: String(c.odeme_gunu),
+      telefon: c.telefon || "",
+      iban: c.iban || "",
+      sehir: c.sehir,
+      notlar: c.notlar || "",
+    });
+    setCalisanModalOpen(true);
+  };
+
+  const calisanSil = async (c: Calisan) => {
+    if (!confirm(`"${c.ad_soyad}" çalışanını ve tüm maaş kayıtlarını silmek istediğine emin misin?`)) return;
+    const { error } = await supabase.from("calisanlar").delete().eq("id", c.id);
+    if (error) { alert("Silinemedi: " + error.message); return; }
+    await verileriYukle();
+  };
+
+  const calisanPasifEt = async (c: Calisan) => {
+    if (!confirm(`"${c.ad_soyad}" çalışanını ${c.aktif ? 'pasife alıyorsun' : 'aktifleştiriyorsun'}. Geçmişi kalır. Emin misin?`)) return;
+    const { error } = await supabase.from("calisanlar").update({ aktif: !c.aktif }).eq("id", c.id);
+    if (error) { alert("Güncellenemedi: " + error.message); return; }
+    await verileriYukle();
+  };
+
+  // ========== MAAŞ ÖDEME İŞLEMLERİ ==========
+
+  const maasOdemeModalAc = (m: MaasOdemesi) => {
+    setSecilenMaasOdeme(m);
+    setMaasOdemeTutari(String(Number(m.beklenen_tutar) - Number(m.odenen_tutar)));
+    setMaasOdemeTarihi(todayISO());
+    setMaasOdemeAciklama(m.aciklama || "");
+    setMaasOdemeModalOpen(true);
+  };
+
+  const maasOdemeKaydet = async () => {
+    if (!secilenMaasOdeme) return;
+    const girilen = parseFloat(maasOdemeTutari);
+    if (isNaN(girilen) || girilen <= 0) {
+      alert("Geçerli bir tutar gir");
+      return;
+    }
+
+    const yeniOdenen = Number(secilenMaasOdeme.odenen_tutar) + girilen;
+    let yeniDurum: "bekliyor" | "kismi" | "tamamlandi" = "bekliyor";
+    if (yeniOdenen >= Number(secilenMaasOdeme.beklenen_tutar)) yeniDurum = "tamamlandi";
+    else if (yeniOdenen > 0) yeniDurum = "kismi";
+
+    const { error } = await supabase.from("maas_odemeleri").update({
+      odenen_tutar: yeniOdenen,
+      son_odeme_tarihi: maasOdemeTarihi,
+      durum: yeniDurum,
+      aciklama: maasOdemeAciklama || null,
+    }).eq("id", secilenMaasOdeme.id);
+
+    if (error) { alert("Kaydedilemedi: " + error.message); return; }
+    await verileriYukle();
+    setMaasOdemeModalOpen(false);
+    setSecilenMaasOdeme(null);
+  };
+
+  const maasOdemeSifirla = async (m: MaasOdemesi) => {
+    if (!confirm("Bu maaş ödeme kaydını sıfırlamak istediğine emin misin?")) return;
+    const { error } = await supabase.from("maas_odemeleri").update({
+      odenen_tutar: 0,
+      son_odeme_tarihi: null,
+      durum: "bekliyor",
+      aciklama: null,
+    }).eq("id", m.id);
+    if (error) { alert("Sıfırlanamadı: " + error.message); return; }
+    await verileriYukle();
+  };
+
   const kayitSil = async (id: number, kayitOrtak: string, foto_url: string | null) => {
     if (kayitOrtak !== giris) {
       alert(`Bu kayıt ${kayitOrtak} tarafından eklendi. Sadece kendi kayıtlarınızı silebilirsiniz.`);
@@ -808,6 +1038,73 @@ export default function HomePage() {
       .sort((a, b) => a.kalanGun - b.kalanGun);
   }, [odemeler, gorunenMusteriler]);
 
+  // Çalışan filtreleme
+  const gorunenCalisanlar = useMemo(() => {
+    const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
+    return calisanlar.filter(c => {
+      if (kisitliSube && c.sehir !== kisitliSube) return false;
+      return true;
+    });
+  }, [calisanlar, giris]);
+
+  // Toplam maaş gideri
+  const maasOzeti = useMemo(() => {
+    const aktifCalisanlar = gorunenCalisanlar.filter(c => c.aktif);
+    const toplamAylikMaas = aktifCalisanlar.reduce((s, c) => s + Number(c.maas), 0);
+    return { 
+      toplamAylikMaas, 
+      aktifCalisanSayisi: aktifCalisanlar.length,
+      pasifCalisanSayisi: gorunenCalisanlar.filter(c => !c.aktif).length,
+    };
+  }, [gorunenCalisanlar]);
+
+  // Pozisyon bazlı dağılım
+  const pozisyonDagilim = useMemo(() => {
+    const map: Record<string, { sayi: number; toplamMaas: number }> = {};
+    gorunenCalisanlar.filter(c => c.aktif).forEach(c => {
+      if (!map[c.pozisyon]) map[c.pozisyon] = { sayi: 0, toplamMaas: 0 };
+      map[c.pozisyon].sayi++;
+      map[c.pozisyon].toplamMaas += Number(c.maas);
+    });
+    return Object.entries(map)
+      .map(([pozisyon, v]) => ({ pozisyon, ...v }))
+      .sort((a, b) => b.toplamMaas - a.toplamMaas);
+  }, [gorunenCalisanlar]);
+
+  // Bu ay maaş ödeme durumu
+  const buAyMaaslari = useMemo(() => {
+    const buAy = suAnkiDonem();
+    const gorunenIds = new Set(gorunenCalisanlar.map(c => c.id));
+    const buAyMaaslar = maasOdemeleri.filter(m => m.donem === buAy && gorunenIds.has(m.calisan_id));
+    const beklenen = buAyMaaslar.reduce((s, m) => s + Number(m.beklenen_tutar), 0);
+    const odenen = buAyMaaslar.reduce((s, m) => s + Number(m.odenen_tutar), 0);
+    return { beklenen, odenen, kalan: beklenen - odenen, sayi: buAyMaaslar.length };
+  }, [maasOdemeleri, gorunenCalisanlar]);
+
+  // Geciken maaşlar
+  const gecikenMaaslar = useMemo(() => {
+    const simdi = new Date();
+    const gorunenMap = new Map(gorunenCalisanlar.map(c => [c.id, c]));
+    
+    return maasOdemeleri
+      .filter(m => {
+        const c = gorunenMap.get(m.calisan_id);
+        if (!c) return false;
+        if (m.durum === "tamamlandi" || m.durum === "iptal") return false;
+        const [yil, ay] = m.donem.split("-");
+        const odemeGunTarihi = new Date(parseInt(yil), parseInt(ay) - 1, c.odeme_gunu);
+        return simdi > odemeGunTarihi;
+      })
+      .map(m => {
+        const c = gorunenMap.get(m.calisan_id)!;
+        const [yil, ay] = m.donem.split("-");
+        const odemeGunTarihi = new Date(parseInt(yil), parseInt(ay) - 1, c.odeme_gunu);
+        const gecikmeGunu = Math.floor((simdi.getTime() - odemeGunTarihi.getTime()) / (1000 * 60 * 60 * 24));
+        return { maas: m, calisan: c, gecikmeGunu };
+      })
+      .sort((a, b) => b.gecikmeGunu - a.gecikmeGunu);
+  }, [maasOdemeleri, gorunenCalisanlar]);
+
 
   const exportCSV = () => {
     const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
@@ -953,6 +1250,19 @@ export default function HomePage() {
             {gecikmisOdemeler.length > 0 && (
               <span className="ml-1 px-1.5 py-0.5 bg-rose-500 text-white text-xs rounded-full">
                 {gecikmisOdemeler.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setAktifSekme("calisanlar")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+              aktifSekme === "calisanlar" ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
+            }`}
+          >
+            <Users className="w-4 h-4" /> Çalışanlar
+            {gecikenMaaslar.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 bg-rose-500 text-white text-xs rounded-full">
+                {gecikenMaaslar.length}
               </span>
             )}
           </button>
@@ -1475,6 +1785,273 @@ export default function HomePage() {
           </div>
         </>
         )}
+
+        {aktifSekme === "calisanlar" && (
+        <>
+          {/* Maaş Özet Kartları */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-gradient-to-br from-violet-500 to-violet-600 text-white rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-violet-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <DollarSign className="w-4 h-4" /> Toplam Aylık Maaş Gideri
+              </div>
+              <div className="text-3xl font-bold">{formatTL(maasOzeti.toplamAylikMaas)}</div>
+              <div className="text-xs text-violet-100 mt-2">{maasOzeti.aktifCalisanSayisi} aktif çalışan</div>
+            </div>
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-emerald-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <CheckCircle2 className="w-4 h-4" /> Bu Ay Ödenen
+              </div>
+              <div className="text-3xl font-bold">{formatTL(buAyMaaslari.odenen)}</div>
+              <div className="text-xs text-emerald-100 mt-2">{formatTL(buAyMaaslari.beklenen)} beklenen</div>
+            </div>
+            <div className={`${buAyMaaslari.kalan > 0 ? "bg-gradient-to-br from-amber-500 to-amber-600" : "bg-gradient-to-br from-stone-700 to-stone-800"} text-white rounded-xl p-5 shadow-sm`}>
+              <div className="flex items-center gap-2 text-amber-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <Clock className="w-4 h-4" /> Bu Ay Kalan
+              </div>
+              <div className="text-3xl font-bold">{formatTL(buAyMaaslari.kalan)}</div>
+              <div className="text-xs text-amber-100 mt-2">{buAyMaaslari.sayi} maaş takipte</div>
+            </div>
+          </div>
+
+          {/* Pozisyon Bazında Dağılım */}
+          {pozisyonDagilim.length > 0 && (
+            <div className="bg-white border border-stone-200 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Users className="w-4 h-4 text-stone-500" />
+                <h3 className="font-semibold text-stone-900">Pozisyon Bazında Dağılım</h3>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {pozisyonDagilim.map((p) => (
+                  <div key={p.pozisyon} className="p-3 bg-stone-50 rounded-lg">
+                    <div className="flex justify-between items-start mb-1">
+                      <span className="font-semibold text-stone-800 text-sm">{p.pozisyon}</span>
+                      <span className="text-xs px-2 py-0.5 bg-violet-100 text-violet-700 rounded-full font-bold">
+                        {p.sayi} kişi
+                      </span>
+                    </div>
+                    <div className="text-base font-bold text-stone-900">{formatTL(p.toplamMaas)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Geciken Maaşlar */}
+          {gecikenMaaslar.length > 0 && (
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <AlertCircle className="w-5 h-5 text-rose-600" />
+                <h3 className="font-bold text-rose-900">GECİKMİŞ MAAŞ ÖDEMELERİ ({gecikenMaaslar.length})</h3>
+              </div>
+              <div className="space-y-2">
+                {gecikenMaaslar.map(({ maas, calisan, gecikmeGunu }) => {
+                  const kalan = Number(maas.beklenen_tutar) - Number(maas.odenen_tutar);
+                  return (
+                    <div key={maas.id} className="bg-white border border-rose-200 rounded-lg p-3 flex items-center justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-stone-900 text-sm">{calisan.ad_soyad}</div>
+                        <div className="text-xs text-rose-600 font-medium">
+                          {gecikmeGunu} gündür gecikmiş · {donemEtiket(maas.donem)} · {calisan.pozisyon}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-rose-600">{formatTL(kalan)}</div>
+                        {maas.durum === "kismi" && (
+                          <div className="text-xs text-stone-500">Kısmi ödendi</div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => maasOdemeModalAc(maas)}
+                        className="px-3 py-1.5 bg-rose-600 text-white text-xs font-semibold rounded-lg hover:bg-rose-700 transition"
+                      >
+                        Ödeme Yap
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Yeni Çalışan Butonu */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => { 
+                setDuzenlenenCalisan(null);
+                setCalisanForm({
+                  ad_soyad: "",
+                  pozisyon: "Grafiker",
+                  maas: "",
+                  baslangic_tarihi: todayISO(),
+                  odeme_gunu: "1",
+                  telefon: "",
+                  iban: "",
+                  sehir: giris && SUBE_KISITLI_ORTAKLAR[giris] ? SUBE_KISITLI_ORTAKLAR[giris] : "İstanbul",
+                  notlar: "",
+                });
+                setCalisanModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-lg text-sm font-medium hover:bg-stone-800 transition shadow-sm"
+            >
+              <Plus className="w-4 h-4" /> Yeni Çalışan
+            </button>
+          </div>
+
+          {/* Çalışan Listesi */}
+          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-stone-200">
+              <h3 className="font-semibold text-stone-900">
+                Çalışanlar ({gorunenCalisanlar.length})
+              </h3>
+            </div>
+            {gorunenCalisanlar.length === 0 ? (
+              <div className="p-12 text-center">
+                <Users className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+                <p className="text-stone-400 text-sm">Henüz çalışan eklenmemiş</p>
+                <p className="text-stone-400 text-xs mt-1">Yukarıdaki "Yeni Çalışan" butonuna basarak başla</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-stone-100">
+                {gorunenCalisanlar.map((c) => {
+                  const calisanMaaslari = maasOdemeleri.filter(m => m.calisan_id === c.id);
+                  const aktifMaas = calisanMaaslari.find(m => m.durum !== "tamamlandi" && m.durum !== "iptal");
+                  const toplamBeklenen = calisanMaaslari.reduce((s, m) => s + Number(m.beklenen_tutar), 0);
+                  const toplamOdenen = calisanMaaslari.reduce((s, m) => s + Number(m.odenen_tutar), 0);
+                  
+                  return (
+                    <div key={c.id} className={`p-4 ${!c.aktif ? "opacity-60" : ""}`}>
+                      <div className="flex items-start gap-3 mb-2">
+                        <div className="w-10 h-10 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center flex-shrink-0">
+                          <UserCircle className="w-6 h-6" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-stone-900">{c.ad_soyad}</h4>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-violet-100 text-violet-700">
+                              {c.pozisyon}
+                            </span>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-stone-100 text-stone-600">
+                              {c.sehir}
+                            </span>
+                            {!c.aktif && (
+                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-rose-100 text-rose-700">
+                                İŞTEN AYRILDI
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xl font-bold text-stone-900 mt-1">
+                            {formatTL(Number(c.maas))}
+                            <span className="text-xs font-normal text-stone-500 ml-1">
+                              / ay · Her ayın {c.odeme_gunu}. günü
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-stone-500 mt-2 flex-wrap">
+                            <span>Başlangıç: {formatDate(c.baslangic_tarihi)}</span>
+                            {c.telefon && (
+                              <a href={`tel:${c.telefon}`} className="flex items-center gap-1 text-blue-600 hover:underline">
+                                <Phone className="w-3 h-3" /> {c.telefon}
+                              </a>
+                            )}
+                            {c.iban && (
+                              <span className="flex items-center gap-1 text-stone-500">
+                                <CreditCard className="w-3 h-3" /> {c.iban}
+                              </span>
+                            )}
+                          </div>
+                          {c.notlar && (
+                            <p className="text-xs text-stone-600 mt-2 italic bg-stone-50 p-2 rounded">{c.notlar}</p>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <button
+                            onClick={() => calisanDuzenle(c)}
+                            className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg transition"
+                            title="Düzenle"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => calisanPasifEt(c)}
+                            className="p-2 text-stone-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
+                            title={c.aktif ? "İşten ayrıl" : "İşe geri al"}
+                          >
+                            {c.aktif ? <X className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                          </button>
+                          <button
+                            onClick={() => calisanSil(c)}
+                            className="p-2 text-stone-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="Sil"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Maaş Geçmişi */}
+                      {calisanMaaslari.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-stone-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">
+                              Maaş Geçmişi
+                            </span>
+                            <span className="text-xs text-stone-500">
+                              {formatTL(toplamOdenen)} / {formatTL(toplamBeklenen)}
+                            </span>
+                          </div>
+                          <div className="space-y-1.5">
+                            {calisanMaaslari.slice(0, 5).map((m) => {
+                              const kalan = Number(m.beklenen_tutar) - Number(m.odenen_tutar);
+                              return (
+                                <div key={m.id} className="flex items-center gap-2 p-2 bg-stone-50 rounded-lg text-xs">
+                                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                    m.durum === "tamamlandi" ? "bg-emerald-500" :
+                                    m.durum === "kismi" ? "bg-amber-500" :
+                                    m.durum === "iptal" ? "bg-stone-400" :
+                                    "bg-rose-500"
+                                  }`} />
+                                  <span className="font-semibold text-stone-700 w-24">{donemEtiket(m.donem)}</span>
+                                  <span className="text-stone-500 flex-1">
+                                    {m.durum === "tamamlandi" ? "✓ Tamamen ödendi" :
+                                     m.durum === "kismi" ? `${formatTL(Number(m.odenen_tutar))} verildi, ${formatTL(kalan)} kaldı` :
+                                     m.durum === "iptal" ? "İptal" :
+                                     `${formatTL(Number(m.beklenen_tutar))} bekliyor`}
+                                  </span>
+                                  {m.durum !== "tamamlandi" && m.durum !== "iptal" && (
+                                    <button
+                                      onClick={() => maasOdemeModalAc(m)}
+                                      className="px-2 py-1 bg-stone-900 text-white text-xs font-semibold rounded hover:bg-stone-800"
+                                    >
+                                      Ödeme Yap
+                                    </button>
+                                  )}
+                                  {m.durum === "tamamlandi" && (
+                                    <button
+                                      onClick={() => maasOdemeSifirla(m)}
+                                      className="px-2 py-1 text-stone-500 hover:text-stone-900 text-xs"
+                                      title="Sıfırla"
+                                    >
+                                      ↻
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {calisanMaaslari.length > 5 && (
+                              <p className="text-xs text-stone-400 text-center mt-1">
+                                +{calisanMaaslari.length - 5} eski maaş daha
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+        )}
       </main>
 
       {modalOpen && (
@@ -1845,6 +2422,212 @@ export default function HomePage() {
               <button onClick={musteriKaydet} className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition">
                 {duzenlenenMusteri ? "Güncelle" : "Kaydet"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ÇALIŞAN EKLE/DÜZENLE MODAL */}
+      {calisanModalOpen && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-lg max-h-[95vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-stone-900">
+                {duzenlenenCalisan ? "Çalışan Düzenle" : "Yeni Çalışan"}
+              </h2>
+              <button onClick={() => { setCalisanModalOpen(false); setDuzenlenenCalisan(null); }} className="p-1 hover:bg-stone-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Ad Soyad</label>
+                <input
+                  type="text"
+                  value={calisanForm.ad_soyad}
+                  onChange={(e) => setCalisanForm({ ...calisanForm, ad_soyad: e.target.value })}
+                  placeholder="Örn: Ferdi Dursun"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Pozisyon</label>
+                <select
+                  value={calisanForm.pozisyon}
+                  onChange={(e) => setCalisanForm({ ...calisanForm, pozisyon: e.target.value })}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                >
+                  {POZISYONLAR.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Aylık Maaş (₺)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={calisanForm.maas}
+                  onChange={(e) => setCalisanForm({ ...calisanForm, maas: e.target.value })}
+                  placeholder="0,00"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-xl font-bold text-stone-900 focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">İşe Başlangıç Tarihi</label>
+                <input
+                  type="date"
+                  value={calisanForm.baslangic_tarihi}
+                  onChange={(e) => setCalisanForm({ ...calisanForm, baslangic_tarihi: e.target.value })}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Maaş Ödeme Günü (Her ayın kaçıncı günü?)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="31"
+                  value={calisanForm.odeme_gunu}
+                  onChange={(e) => setCalisanForm({ ...calisanForm, odeme_gunu: e.target.value })}
+                  placeholder="Örn: 5"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Şube</label>
+                {giris && SUBE_KISITLI_ORTAKLAR[giris] ? (
+                  <div className="px-4 py-3 bg-stone-100 rounded-lg text-sm text-stone-700 font-semibold">
+                    {SUBE_KISITLI_ORTAKLAR[giris]} (sabit)
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {SUBELER.map((s) => (
+                      <button key={s} onClick={() => setCalisanForm({ ...calisanForm, sehir: s })}
+                        className={`py-3 rounded-lg font-semibold text-sm transition ${calisanForm.sehir === s ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-600"}`}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Telefon (opsiyonel)</label>
+                <input
+                  type="tel"
+                  value={calisanForm.telefon}
+                  onChange={(e) => setCalisanForm({ ...calisanForm, telefon: e.target.value })}
+                  placeholder="0555 555 5555"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">IBAN (opsiyonel)</label>
+                <input
+                  type="text"
+                  value={calisanForm.iban}
+                  onChange={(e) => setCalisanForm({ ...calisanForm, iban: e.target.value })}
+                  placeholder="TR00 0000 0000 0000 0000 0000 00"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Notlar (opsiyonel)</label>
+                <textarea
+                  value={calisanForm.notlar}
+                  onChange={(e) => setCalisanForm({ ...calisanForm, notlar: e.target.value })}
+                  placeholder="Önemli notlar..."
+                  rows={2}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-white border-t border-stone-200 p-4 flex gap-2">
+              <button onClick={() => { setCalisanModalOpen(false); setDuzenlenenCalisan(null); }} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200 transition">İptal</button>
+              <button onClick={calisanKaydet} className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition">
+                {duzenlenenCalisan ? "Güncelle" : "Kaydet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MAAŞ ÖDEME MODAL */}
+      {maasOdemeModalOpen && secilenMaasOdeme && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-md max-h-[95vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-stone-900">Maaş Ödemesi Yap</h2>
+              <button onClick={() => setMaasOdemeModalOpen(false)} className="p-1 hover:bg-stone-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-stone-50 p-4 rounded-lg">
+                <div className="text-xs text-stone-500 uppercase tracking-wider font-semibold mb-1">
+                  {donemEtiket(secilenMaasOdeme.donem)}
+                </div>
+                <div className="text-sm text-stone-600">Maaş: <span className="font-bold">{formatTL(Number(secilenMaasOdeme.beklenen_tutar))}</span></div>
+                <div className="text-sm text-stone-600">Şu ana kadar verilen: <span className="font-bold text-emerald-600">{formatTL(Number(secilenMaasOdeme.odenen_tutar))}</span></div>
+                <div className="text-sm text-stone-600">Kalan borç: <span className="font-bold text-rose-600">{formatTL(Number(secilenMaasOdeme.beklenen_tutar) - Number(secilenMaasOdeme.odenen_tutar))}</span></div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Ödenecek Tutar (₺)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={maasOdemeTutari}
+                  onChange={(e) => setMaasOdemeTutari(e.target.value)}
+                  placeholder="0,00"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-xl font-bold focus:outline-none focus:border-stone-400"
+                  autoFocus
+                />
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => setMaasOdemeTutari(String(Number(secilenMaasOdeme.beklenen_tutar) - Number(secilenMaasOdeme.odenen_tutar)))}
+                    className="flex-1 py-2 bg-stone-100 text-stone-700 rounded-lg text-xs font-semibold hover:bg-stone-200">
+                    Tamamı
+                  </button>
+                  <button onClick={() => setMaasOdemeTutari(String((Number(secilenMaasOdeme.beklenen_tutar) - Number(secilenMaasOdeme.odenen_tutar)) / 2))}
+                    className="flex-1 py-2 bg-stone-100 text-stone-700 rounded-lg text-xs font-semibold hover:bg-stone-200">
+                    Yarısı
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Ödeme Tarihi</label>
+                <input
+                  type="date"
+                  value={maasOdemeTarihi}
+                  onChange={(e) => setMaasOdemeTarihi(e.target.value)}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Açıklama (opsiyonel)</label>
+                <input
+                  type="text"
+                  value={maasOdemeAciklama}
+                  onChange={(e) => setMaasOdemeAciklama(e.target.value)}
+                  placeholder="Örn: Havale, Elden, Avans"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+            </div>
+            <div className="sticky bottom-0 bg-white border-t border-stone-200 p-4 flex gap-2">
+              <button onClick={() => setMaasOdemeModalOpen(false)} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200">İptal</button>
+              <button onClick={maasOdemeKaydet} className="flex-1 py-3 bg-violet-600 text-white rounded-lg font-semibold text-sm hover:bg-violet-700">Ödemeyi Kaydet</button>
             </div>
           </div>
         </div>
