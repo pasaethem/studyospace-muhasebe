@@ -179,6 +179,8 @@ export default function HomePage() {
   const [filtreSehir, setFiltreSehir] = useState("Hepsi");
   const [filtreOrtak, setFiltreOrtak] = useState("Hepsi");
   const [filtreDonem, setFiltreDonem] = useState("bu_ay");
+  const [ozelTarihBaslangic, setOzelTarihBaslangic] = useState("");
+  const [ozelTarihBitis, setOzelTarihBitis] = useState("");
 
   // Sekme sistemi
   const [aktifSekme, setAktifSekme] = useState<"kasa" | "musteriler" | "calisanlar">("kasa");
@@ -854,13 +856,12 @@ export default function HomePage() {
     const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
 
     return kayitlar.filter((k) => {
-      // Şube kısıtı: Aden sadece kendi şubesini görür
       if (kisitliSube && k.sehir !== kisitliSube) return false;
-      
       if (filtreSehir !== "Hepsi" && k.sehir !== filtreSehir) return false;
       if (filtreOrtak !== "Hepsi" && k.ortak !== filtreOrtak) return false;
 
       const kayitTarih = new Date(k.tarih);
+      
       if (filtreDonem === "bugun") {
         return kayitTarih.toDateString() === bugun.toDateString();
       }
@@ -873,9 +874,26 @@ export default function HomePage() {
       if (filtreDonem === "bu_ay") {
         return kayitTarih.getMonth() === simdi.getMonth() && kayitTarih.getFullYear() === simdi.getFullYear();
       }
+      if (filtreDonem === "gecen_ay") {
+        const gecenAy = new Date(simdi.getFullYear(), simdi.getMonth() - 1, 1);
+        return kayitTarih.getMonth() === gecenAy.getMonth() && kayitTarih.getFullYear() === gecenAy.getFullYear();
+      }
+      if (filtreDonem === "son_3_ay") {
+        const ucAyOnce = new Date(simdi.getFullYear(), simdi.getMonth() - 3, 1);
+        return kayitTarih >= ucAyOnce;
+      }
+      if (filtreDonem === "bu_yil") {
+        return kayitTarih.getFullYear() === simdi.getFullYear();
+      }
+      if (filtreDonem === "ozel" && ozelTarihBaslangic && ozelTarihBitis) {
+        const baslangic = new Date(ozelTarihBaslangic);
+        const bitis = new Date(ozelTarihBitis);
+        bitis.setHours(23, 59, 59, 999);
+        return kayitTarih >= baslangic && kayitTarih <= bitis;
+      }
       return true;
     });
-  }, [kayitlar, filtreSehir, filtreOrtak, filtreDonem]);
+  }, [kayitlar, filtreSehir, filtreOrtak, filtreDonem, giris, ozelTarihBaslangic, ozelTarihBitis]);
 
   const ozet = useMemo(() => {
     const gelir = filtrelenmis.filter((k) => k.tip === "gelir").reduce((s, k) => s + Number(k.tutar), 0);
@@ -1306,13 +1324,17 @@ export default function HomePage() {
             <Filter className="w-4 h-4 text-stone-500" />
             <span className="text-sm font-medium text-stone-700">Filtreler</span>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <div className="flex gap-1 bg-stone-100 p-1 rounded-lg">
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex flex-wrap gap-1 bg-stone-100 p-1 rounded-lg">
               {[
                 { v: "bugun", e: "Bugün" },
                 { v: "bu_hafta", e: "Bu Hafta" },
                 { v: "bu_ay", e: "Bu Ay" },
+                { v: "gecen_ay", e: "Geçen Ay" },
+                { v: "son_3_ay", e: "Son 3 Ay" },
+                { v: "bu_yil", e: "Bu Yıl" },
                 { v: "hepsi", e: "Tümü" },
+                { v: "ozel", e: "📅 Özel" },
               ].map((o) => (
                 <button
                   key={o.v}
@@ -1336,6 +1358,43 @@ export default function HomePage() {
               {ORTAKLAR.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>
+          
+          {/* Özel tarih aralığı - sadece "Özel" seçildiğinde göster */}
+          {filtreDonem === "ozel" && (
+            <div className="mt-3 pt-3 border-t border-stone-100 flex flex-wrap gap-3 items-end">
+              <div className="flex-1 min-w-[140px]">
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Başlangıç</label>
+                <input
+                  type="date"
+                  value={ozelTarihBaslangic}
+                  onChange={(e) => setOzelTarihBaslangic(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+              <div className="flex-1 min-w-[140px]">
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Bitiş</label>
+                <input
+                  type="date"
+                  value={ozelTarihBitis}
+                  onChange={(e) => setOzelTarihBitis(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+              {(ozelTarihBaslangic || ozelTarihBitis) && (
+                <button
+                  onClick={() => { setOzelTarihBaslangic(""); setOzelTarihBitis(""); }}
+                  className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-xs font-semibold transition"
+                >
+                  Temizle
+                </button>
+              )}
+              {ozelTarihBaslangic && ozelTarihBitis && (
+                <div className="text-xs text-stone-500 self-center">
+                  {formatDate(ozelTarihBaslangic)} - {formatDate(ozelTarihBitis)}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
