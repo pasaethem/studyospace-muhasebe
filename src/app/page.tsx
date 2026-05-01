@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield, Briefcase, Clock, CheckCircle2, AlertCircle, DollarSign, Phone, FileText, Edit2, UserCircle, CreditCard } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield, Briefcase, Clock, CheckCircle2, AlertCircle, DollarSign, Phone, FileText, Edit2, UserCircle, CreditCard, Search } from "lucide-react";
 
 const ORTAKLAR = ["Ethem", "Ferdi", "Aden"];
 const SUBELER = ["İstanbul", "Şanlıurfa"];
@@ -181,6 +181,7 @@ export default function HomePage() {
   const [filtreDonem, setFiltreDonem] = useState("bu_ay");
   const [ozelTarihBaslangic, setOzelTarihBaslangic] = useState("");
   const [ozelTarihBitis, setOzelTarihBitis] = useState("");
+  const [aramaMetni, setAramaMetni] = useState("");
 
   // Sekme sistemi
   const [aktifSekme, setAktifSekme] = useState<"kasa" | "musteriler" | "calisanlar">("kasa");
@@ -860,6 +861,17 @@ export default function HomePage() {
       if (filtreSehir !== "Hepsi" && k.sehir !== filtreSehir) return false;
       if (filtreOrtak !== "Hepsi" && k.ortak !== filtreOrtak) return false;
 
+      // Arama metni filtresi - açıklama, kategori, müşteri'de arama yapar
+      if (aramaMetni.trim()) {
+        const arama = aramaMetni.toLowerCase().trim();
+        const aramaAlanlari = [
+          k.aciklama?.toLowerCase() || "",
+          k.kategori?.toLowerCase() || "",
+          k.musteri?.toLowerCase() || "",
+        ].join(" ");
+        if (!aramaAlanlari.includes(arama)) return false;
+      }
+
       const kayitTarih = new Date(k.tarih);
       
       if (filtreDonem === "bugun") {
@@ -893,7 +905,7 @@ export default function HomePage() {
       }
       return true;
     });
-  }, [kayitlar, filtreSehir, filtreOrtak, filtreDonem, giris, ozelTarihBaslangic, ozelTarihBitis]);
+  }, [kayitlar, filtreSehir, filtreOrtak, filtreDonem, giris, ozelTarihBaslangic, ozelTarihBitis, aramaMetni]);
 
   const ozet = useMemo(() => {
     const gelir = filtrelenmis.filter((k) => k.tip === "gelir").reduce((s, k) => s + Number(k.tutar), 0);
@@ -1320,9 +1332,35 @@ export default function HomePage() {
         </div>
 
         <div className="bg-white border border-stone-200 rounded-xl p-4">
+          {/* Arama kutusu */}
+          <div className="relative mb-3">
+            <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={aramaMetni}
+              onChange={(e) => setAramaMetni(e.target.value)}
+              placeholder="Açıklama, kategori veya müşteri ara... (örn: market, taksi, X firma)"
+              className="w-full pl-10 pr-10 py-2.5 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400 focus:bg-white transition"
+            />
+            {aramaMetni && (
+              <button
+                onClick={() => setAramaMetni("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-700"
+                title="Temizle"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
           <div className="flex items-center gap-2 mb-3">
             <Filter className="w-4 h-4 text-stone-500" />
             <span className="text-sm font-medium text-stone-700">Filtreler</span>
+            {aramaMetni && (
+              <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
+                "{aramaMetni}" araması aktif · {filtrelenmis.length} sonuç
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap gap-2 items-center">
             <div className="flex flex-wrap gap-1 bg-stone-100 p-1 rounded-lg">
