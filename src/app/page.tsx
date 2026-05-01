@@ -1478,22 +1478,22 @@ export default function HomePage() {
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {/* Sekmeler */}
-        <div className="flex gap-1 bg-white border border-stone-200 p-1 rounded-xl w-fit">
+        <div className="grid grid-cols-2 md:flex md:w-fit gap-1 bg-white border border-stone-200 p-1 rounded-xl">
           <button
             onClick={() => setAktifSekme("kasa")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition ${
               aktifSekme === "kasa" ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
             }`}
           >
-            <Wallet className="w-4 h-4" /> Kasa
+            <Wallet className="w-4 h-4 flex-shrink-0" /> Kasa
           </button>
           <button
             onClick={() => setAktifSekme("musteriler")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition ${
               aktifSekme === "musteriler" ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
             }`}
           >
-            <Briefcase className="w-4 h-4" /> Müşteriler
+            <Briefcase className="w-4 h-4 flex-shrink-0" /> Müşteriler
             {gecikmisOdemeler.length > 0 && (
               <span className="ml-1 px-1.5 py-0.5 bg-rose-500 text-white text-xs rounded-full">
                 {gecikmisOdemeler.length}
@@ -1502,11 +1502,11 @@ export default function HomePage() {
           </button>
           <button
             onClick={() => setAktifSekme("calisanlar")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition ${
               aktifSekme === "calisanlar" ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
             }`}
           >
-            <Users className="w-4 h-4" /> Çalışanlar
+            <Users className="w-4 h-4 flex-shrink-0" /> Çalışanlar
             {gecikenMaaslar.length > 0 && (
               <span className="ml-1 px-1.5 py-0.5 bg-rose-500 text-white text-xs rounded-full">
                 {gecikenMaaslar.length}
@@ -1515,11 +1515,11 @@ export default function HomePage() {
           </button>
           <button
             onClick={() => setAktifSekme("borclar")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-lg text-sm font-semibold transition ${
               aktifSekme === "borclar" ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
             }`}
           >
-            <HandCoins className="w-4 h-4" /> Borç/Alacak
+            <HandCoins className="w-4 h-4 flex-shrink-0" /> Borç/Alacak
           </button>
         </div>
 
