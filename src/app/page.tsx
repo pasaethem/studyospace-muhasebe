@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield, Briefcase, Clock, CheckCircle2, AlertCircle, DollarSign, Phone, FileText, Edit2, UserCircle, CreditCard, Search } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TrendingDown, Wallet, Calendar, Users, Building2, Filter, X, Download, LogOut, Camera, ImageIcon, Loader2, Key, Shield, Briefcase, Clock, CheckCircle2, AlertCircle, DollarSign, Phone, FileText, Edit2, UserCircle, CreditCard, Search, ArrowUpRight, ArrowDownLeft, HandCoins } from "lucide-react";
 
 const ORTAKLAR = ["Ethem", "Ferdi", "Aden"];
 const SUBELER = ["İstanbul", "Şanlıurfa"];
@@ -141,6 +141,30 @@ type MaasOdemesi = {
   olusturma: string;
 };
 
+type BorcAlacak = {
+  id: number;
+  tip: "alacak" | "borc";
+  kisi_firma: string;
+  tutar: number;
+  islem_tarihi: string;
+  aciklama: string | null;
+  telefon: string | null;
+  durum: "bekliyor" | "kismi" | "kapandi" | "iptal";
+  odenen_tutar: number;
+  ekleyen_ortak: string;
+  olusturma: string;
+};
+
+type BorcHareketi = {
+  id: number;
+  borc_id: number;
+  tutar: number;
+  tarih: string;
+  aciklama: string | null;
+  yapan_ortak: string;
+  olusturma: string;
+};
+
 const donemEtiket = (donem: string) => {
   const [yil, ay] = donem.split("-");
   const aylar = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
@@ -184,7 +208,7 @@ export default function HomePage() {
   const [aramaMetni, setAramaMetni] = useState("");
 
   // Sekme sistemi
-  const [aktifSekme, setAktifSekme] = useState<"kasa" | "musteriler" | "calisanlar">("kasa");
+  const [aktifSekme, setAktifSekme] = useState<"kasa" | "musteriler" | "calisanlar" | "borclar">("kasa");
 
   // Müşteriler
   const [musteriler, setMusteriler] = useState<Musteri[]>([]);
@@ -235,6 +259,33 @@ export default function HomePage() {
   const [maasOdemeTarihi, setMaasOdemeTarihi] = useState(todayISO());
   const [maasOdemeAciklama, setMaasOdemeAciklama] = useState("");
 
+  // Borç/Alacak
+  const [borcAlacaklar, setBorcAlacaklar] = useState<BorcAlacak[]>([]);
+  const [borcHareketleri, setBorcHareketleri] = useState<BorcHareketi[]>([]);
+  const [borcModalOpen, setBorcModalOpen] = useState(false);
+  const [duzenlenenBorc, setDuzenlenenBorc] = useState<BorcAlacak | null>(null);
+  const [borcForm, setBorcForm] = useState({
+    tip: "alacak" as "alacak" | "borc",
+    kisi_firma: "",
+    tutar: "",
+    islem_tarihi: todayISO(),
+    aciklama: "",
+    telefon: "",
+  });
+  const [borcFiltreTip, setBorcFiltreTip] = useState<"hepsi" | "alacak" | "borc">("hepsi");
+  const [borcAramaMetni, setBorcAramaMetni] = useState("");
+
+  // Borç hareketi modalı
+  const [borcHareketModalOpen, setBorcHareketModalOpen] = useState(false);
+  const [secilenBorc, setSecilenBorc] = useState<BorcAlacak | null>(null);
+  const [borcHareketTutari, setBorcHareketTutari] = useState("");
+  const [borcHareketTarihi, setBorcHareketTarihi] = useState(todayISO());
+  const [borcHareketAciklama, setBorcHareketAciklama] = useState("");
+
+  // Borç detay modalı (geçmişi göster)
+  const [borcDetayModalOpen, setBorcDetayModalOpen] = useState(false);
+  const [detayBorc, setDetayBorc] = useState<BorcAlacak | null>(null);
+
   const [form, setForm] = useState({
     tip: "gider" as "gider" | "gelir",
     tutar: "",
@@ -266,35 +317,38 @@ export default function HomePage() {
 
   const verileriYukle = async () => {
     setLoading(true);
-    const [kayitlarRes, musterilerRes, odemelerRes, calisanlarRes, maasOdemeleriRes] = await Promise.all([
+    const [kayitlarRes, musterilerRes, odemelerRes, calisanlarRes, maasOdemeleriRes, borcAlacakRes, borcHareketRes] = await Promise.all([
       supabase.from("kayitlar").select("*").order("tarih", { ascending: false }).order("olusturma", { ascending: false }),
       supabase.from("musteriler").select("*").order("firma_adi"),
       supabase.from("odemeler").select("*").order("donem", { ascending: false }),
       supabase.from("calisanlar").select("*").order("ad_soyad"),
       supabase.from("maas_odemeleri").select("*").order("donem", { ascending: false }),
+      supabase.from("borc_alacaklar").select("*").order("islem_tarihi", { ascending: false }),
+      supabase.from("borc_hareketleri").select("*").order("tarih", { ascending: false }),
     ]);
     
-    if (kayitlarRes.error) {
-      console.error(kayitlarRes.error);
-    } else {
-      setKayitlar(kayitlarRes.data || []);
-    }
+    if (kayitlarRes.error) console.error(kayitlarRes.error);
+    else setKayitlar(kayitlarRes.data || []);
 
-    if (musterilerRes.error) {
-      console.error(musterilerRes.error);
-    } else {
+    if (musterilerRes.error) console.error(musterilerRes.error);
+    else {
       setMusteriler(musterilerRes.data || []);
       await otomatikOdemeOlustur(musterilerRes.data || [], odemelerRes.data || []);
     }
 
-    if (calisanlarRes.error) {
-      console.error(calisanlarRes.error);
-    } else {
+    if (calisanlarRes.error) console.error(calisanlarRes.error);
+    else {
       setCalisanlar(calisanlarRes.data || []);
       await otomatikMaasOlustur(calisanlarRes.data || [], maasOdemeleriRes.data || []);
     }
 
-    // Tüm ödemeleri tekrar yükle (yeni eklenenler olabilir)
+    if (borcAlacakRes.error) console.error(borcAlacakRes.error);
+    else setBorcAlacaklar(borcAlacakRes.data || []);
+
+    if (borcHareketRes.error) console.error(borcHareketRes.error);
+    else setBorcHareketleri(borcHareketRes.data || []);
+
+    // Tüm ödemeleri tekrar yükle
     const [guncelOdemeler, guncelMaaslar] = await Promise.all([
       supabase.from("odemeler").select("*").order("donem", { ascending: false }),
       supabase.from("maas_odemeleri").select("*").order("donem", { ascending: false }),
@@ -828,6 +882,135 @@ export default function HomePage() {
     await verileriYukle();
   };
 
+  // ========== BORÇ/ALACAK İŞLEMLERİ ==========
+
+  const borcKaydet = async () => {
+    if (!borcForm.kisi_firma || !borcForm.tutar) {
+      alert("Kişi/firma ve tutar zorunludur");
+      return;
+    }
+
+    const veri = {
+      tip: borcForm.tip,
+      kisi_firma: borcForm.kisi_firma,
+      tutar: parseFloat(borcForm.tutar),
+      islem_tarihi: borcForm.islem_tarihi,
+      aciklama: borcForm.aciklama || null,
+      telefon: borcForm.telefon || null,
+      ekleyen_ortak: giris!,
+    };
+
+    if (duzenlenenBorc) {
+      const { error } = await supabase.from("borc_alacaklar").update(veri).eq("id", duzenlenenBorc.id);
+      if (error) { alert("Güncellenemedi: " + error.message); return; }
+    } else {
+      const { error } = await supabase.from("borc_alacaklar").insert(veri);
+      if (error) { alert("Eklenemedi: " + error.message); return; }
+    }
+
+    await verileriYukle();
+    setBorcModalOpen(false);
+    setDuzenlenenBorc(null);
+    setBorcForm({
+      tip: "alacak",
+      kisi_firma: "",
+      tutar: "",
+      islem_tarihi: todayISO(),
+      aciklama: "",
+      telefon: "",
+    });
+  };
+
+  const borcDuzenle = (b: BorcAlacak) => {
+    setDuzenlenenBorc(b);
+    setBorcForm({
+      tip: b.tip,
+      kisi_firma: b.kisi_firma,
+      tutar: String(b.tutar),
+      islem_tarihi: b.islem_tarihi,
+      aciklama: b.aciklama || "",
+      telefon: b.telefon || "",
+    });
+    setBorcModalOpen(true);
+  };
+
+  const borcSil = async (b: BorcAlacak) => {
+    if (!confirm(`"${b.kisi_firma}" kaydını ve tüm hareketlerini silmek istediğine emin misin?`)) return;
+    const { error } = await supabase.from("borc_alacaklar").delete().eq("id", b.id);
+    if (error) { alert("Silinemedi: " + error.message); return; }
+    await verileriYukle();
+  };
+
+  const borcHareketModalAc = (b: BorcAlacak) => {
+    setSecilenBorc(b);
+    setBorcHareketTutari(String(Number(b.tutar) - Number(b.odenen_tutar)));
+    setBorcHareketTarihi(todayISO());
+    setBorcHareketAciklama("");
+    setBorcHareketModalOpen(true);
+  };
+
+  const borcHareketKaydet = async () => {
+    if (!secilenBorc) return;
+    const girilen = parseFloat(borcHareketTutari);
+    if (isNaN(girilen) || girilen <= 0) {
+      alert("Geçerli bir tutar gir");
+      return;
+    }
+
+    // Hareket ekle
+    const { error: hareketError } = await supabase.from("borc_hareketleri").insert({
+      borc_id: secilenBorc.id,
+      tutar: girilen,
+      tarih: borcHareketTarihi,
+      aciklama: borcHareketAciklama || null,
+      yapan_ortak: giris!,
+    });
+
+    if (hareketError) { alert("Hareket eklenemedi: " + hareketError.message); return; }
+
+    // Borç durumunu güncelle
+    const yeniOdenen = Number(secilenBorc.odenen_tutar) + girilen;
+    let yeniDurum: "bekliyor" | "kismi" | "kapandi" = "bekliyor";
+    if (yeniOdenen >= Number(secilenBorc.tutar)) yeniDurum = "kapandi";
+    else if (yeniOdenen > 0) yeniDurum = "kismi";
+
+    const { error: updateError } = await supabase.from("borc_alacaklar").update({
+      odenen_tutar: yeniOdenen,
+      durum: yeniDurum,
+    }).eq("id", secilenBorc.id);
+
+    if (updateError) { alert("Güncellenemedi: " + updateError.message); return; }
+
+    await verileriYukle();
+    setBorcHareketModalOpen(false);
+    setSecilenBorc(null);
+  };
+
+  const borcHareketSil = async (h: BorcHareketi, b: BorcAlacak) => {
+    if (!confirm(`${formatTL(Number(h.tutar))} tutarındaki hareketi silmek istediğine emin misin?`)) return;
+    
+    const { error: silError } = await supabase.from("borc_hareketleri").delete().eq("id", h.id);
+    if (silError) { alert("Silinemedi: " + silError.message); return; }
+
+    // Borç durumunu güncelle
+    const yeniOdenen = Number(b.odenen_tutar) - Number(h.tutar);
+    let yeniDurum: "bekliyor" | "kismi" | "kapandi" = "bekliyor";
+    if (yeniOdenen >= Number(b.tutar)) yeniDurum = "kapandi";
+    else if (yeniOdenen > 0) yeniDurum = "kismi";
+
+    await supabase.from("borc_alacaklar").update({
+      odenen_tutar: Math.max(0, yeniOdenen),
+      durum: yeniDurum,
+    }).eq("id", b.id);
+
+    await verileriYukle();
+  };
+
+  const borcDetayAc = (b: BorcAlacak) => {
+    setDetayBorc(b);
+    setBorcDetayModalOpen(true);
+  };
+
   const kayitSil = async (id: number, kayitOrtak: string, foto_url: string | null) => {
     if (kayitOrtak !== giris) {
       alert(`Bu kayıt ${kayitOrtak} tarafından eklendi. Sadece kendi kayıtlarınızı silebilirsiniz.`);
@@ -1135,6 +1318,40 @@ export default function HomePage() {
       .sort((a, b) => b.gecikmeGunu - a.gecikmeGunu);
   }, [maasOdemeleri, gorunenCalisanlar]);
 
+  // Borç/Alacak filtreleme
+  const filtrelenmisBorclar = useMemo(() => {
+    return borcAlacaklar.filter(b => {
+      if (borcFiltreTip !== "hepsi" && b.tip !== borcFiltreTip) return false;
+      if (borcAramaMetni.trim()) {
+        const arama = borcAramaMetni.toLowerCase().trim();
+        const aramaAlanlari = [
+          b.kisi_firma?.toLowerCase() || "",
+          b.aciklama?.toLowerCase() || "",
+          b.telefon?.toLowerCase() || "",
+        ].join(" ");
+        if (!aramaAlanlari.includes(arama)) return false;
+      }
+      return true;
+    });
+  }, [borcAlacaklar, borcFiltreTip, borcAramaMetni]);
+
+  // Borç/Alacak özet
+  const borcOzet = useMemo(() => {
+    const acikAlacaklar = borcAlacaklar.filter(b => b.tip === "alacak" && b.durum !== "kapandi" && b.durum !== "iptal");
+    const acikBorclar = borcAlacaklar.filter(b => b.tip === "borc" && b.durum !== "kapandi" && b.durum !== "iptal");
+    
+    const toplamAlacak = acikAlacaklar.reduce((s, b) => s + (Number(b.tutar) - Number(b.odenen_tutar)), 0);
+    const toplamBorc = acikBorclar.reduce((s, b) => s + (Number(b.tutar) - Number(b.odenen_tutar)), 0);
+    
+    return {
+      toplamAlacak,
+      toplamBorc,
+      net: toplamAlacak - toplamBorc,
+      alacakSayisi: acikAlacaklar.length,
+      borcSayisi: acikBorclar.length,
+    };
+  }, [borcAlacaklar]);
+
 
   const exportCSV = () => {
     const kisitliSube = giris ? SUBE_KISITLI_ORTAKLAR[giris] : null;
@@ -1295,6 +1512,14 @@ export default function HomePage() {
                 {gecikenMaaslar.length}
               </span>
             )}
+          </button>
+          <button
+            onClick={() => setAktifSekme("borclar")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
+              aktifSekme === "borclar" ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100"
+            }`}
+          >
+            <HandCoins className="w-4 h-4" /> Borç/Alacak
           </button>
         </div>
 
@@ -2149,6 +2374,212 @@ export default function HomePage() {
           </div>
         </>
         )}
+
+        {aktifSekme === "borclar" && (
+        <>
+          {/* Borç/Alacak Özet Kartları */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-emerald-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <ArrowDownLeft className="w-4 h-4" /> Toplam Alacak (Bana Borçlu)
+              </div>
+              <div className="text-3xl font-bold">{formatTL(borcOzet.toplamAlacak)}</div>
+              <div className="text-xs text-emerald-100 mt-2">{borcOzet.alacakSayisi} açık alacak</div>
+            </div>
+            <div className="bg-gradient-to-br from-rose-500 to-rose-600 text-white rounded-xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-rose-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <ArrowUpRight className="w-4 h-4" /> Toplam Borç (Şirket Borçlu)
+              </div>
+              <div className="text-3xl font-bold">{formatTL(borcOzet.toplamBorc)}</div>
+              <div className="text-xs text-rose-100 mt-2">{borcOzet.borcSayisi} açık borç</div>
+            </div>
+            <div className={`${borcOzet.net >= 0 ? "bg-gradient-to-br from-stone-800 to-stone-900" : "bg-gradient-to-br from-amber-600 to-amber-700"} text-white rounded-xl p-5 shadow-sm`}>
+              <div className="flex items-center gap-2 text-stone-50 text-xs font-medium uppercase tracking-wider mb-2">
+                <Wallet className="w-4 h-4" /> Net Durum
+              </div>
+              <div className="text-3xl font-bold">{formatTL(borcOzet.net)}</div>
+              <div className="text-xs text-stone-300 mt-2">
+                {borcOzet.net >= 0 ? "Lehinize" : "Aleyhinize"}
+              </div>
+            </div>
+          </div>
+
+          {/* Filtreler ve Arama */}
+          <div className="bg-white border border-stone-200 rounded-xl p-4">
+            <div className="relative mb-3">
+              <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={borcAramaMetni}
+                onChange={(e) => setBorcAramaMetni(e.target.value)}
+                placeholder="Kişi/firma adı, açıklama veya telefon ara..."
+                className="w-full pl-10 pr-10 py-2.5 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400 focus:bg-white transition"
+              />
+              {borcAramaMetni && (
+                <button onClick={() => setBorcAramaMetni("")} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-700">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="flex gap-1 bg-stone-100 p-1 rounded-lg">
+                {[
+                  { v: "hepsi", e: "Tümü" },
+                  { v: "alacak", e: "💰 Alacaklar" },
+                  { v: "borc", e: "📤 Borçlar" },
+                ].map((o) => (
+                  <button
+                    key={o.v}
+                    onClick={() => setBorcFiltreTip(o.v as any)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                      borcFiltreTip === o.v ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"
+                    }`}
+                  >
+                    {o.e}
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-stone-500 ml-auto">{filtrelenmisBorclar.length} kayıt</span>
+            </div>
+          </div>
+
+          {/* Yeni Kayıt Butonu */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => { 
+                setDuzenlenenBorc(null);
+                setBorcForm({
+                  tip: "alacak",
+                  kisi_firma: "",
+                  tutar: "",
+                  islem_tarihi: todayISO(),
+                  aciklama: "",
+                  telefon: "",
+                });
+                setBorcModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-stone-900 text-white rounded-lg text-sm font-medium hover:bg-stone-800 transition shadow-sm"
+            >
+              <Plus className="w-4 h-4" /> Yeni Borç/Alacak
+            </button>
+          </div>
+
+          {/* Liste */}
+          <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-stone-200">
+              <h3 className="font-semibold text-stone-900">
+                Borç/Alacak Listesi ({filtrelenmisBorclar.length})
+              </h3>
+            </div>
+            {filtrelenmisBorclar.length === 0 ? (
+              <div className="p-12 text-center">
+                <HandCoins className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+                <p className="text-stone-400 text-sm">Henüz kayıt yok</p>
+                <p className="text-stone-400 text-xs mt-1">Yukarıdaki butona basarak ekle</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-stone-100">
+                {filtrelenmisBorclar.map((b) => {
+                  const kalan = Number(b.tutar) - Number(b.odenen_tutar);
+                  const hareketSayisi = borcHareketleri.filter(h => h.borc_id === b.id).length;
+                  return (
+                    <div key={b.id} className={`p-4 ${b.durum === "kapandi" ? "opacity-60" : ""}`}>
+                      <div className="flex items-start gap-3">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                          b.tip === "alacak" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                        }`}>
+                          {b.tip === "alacak" ? <ArrowDownLeft className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-stone-900">{b.kisi_firma}</h4>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                              b.tip === "alacak" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                            }`}>
+                              {b.tip === "alacak" ? "Bana Borçlu" : "Şirket Borçlu"}
+                            </span>
+                            {b.durum === "kapandi" && (
+                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-stone-200 text-stone-600">
+                                ✓ KAPANDI
+                              </span>
+                            )}
+                            {b.durum === "kismi" && (
+                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+                                Kısmi
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-baseline gap-2 mt-1">
+                            <span className="text-xl font-bold text-stone-900">
+                              {formatTL(Number(b.tutar))}
+                            </span>
+                            {b.durum !== "kapandi" && Number(b.odenen_tutar) > 0 && (
+                              <span className="text-sm text-stone-500">
+                                ({formatTL(Number(b.odenen_tutar))} {b.tip === "alacak" ? "tahsil edildi" : "ödendi"})
+                              </span>
+                            )}
+                          </div>
+                          {kalan > 0 && b.durum !== "kapandi" && (
+                            <div className={`text-sm font-semibold mt-1 ${b.tip === "alacak" ? "text-emerald-600" : "text-rose-600"}`}>
+                              Kalan: {formatTL(kalan)}
+                            </div>
+                          )}
+                          <div className="flex items-center gap-3 text-xs text-stone-500 mt-2 flex-wrap">
+                            <span>{formatDate(b.islem_tarihi)}</span>
+                            {b.telefon && (
+                              <a href={`tel:${b.telefon}`} className="flex items-center gap-1 text-blue-600 hover:underline">
+                                <Phone className="w-3 h-3" /> {b.telefon}
+                              </a>
+                            )}
+                            {hareketSayisi > 0 && (
+                              <button
+                                onClick={() => borcDetayAc(b)}
+                                className="text-blue-600 hover:underline"
+                              >
+                                {hareketSayisi} hareket geçmişi
+                              </button>
+                            )}
+                          </div>
+                          {b.aciklama && (
+                            <p className="text-xs text-stone-600 mt-2 italic bg-stone-50 p-2 rounded">{b.aciklama}</p>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          {b.durum !== "kapandi" && (
+                            <button
+                              onClick={() => borcHareketModalAc(b)}
+                              className={`px-3 py-1.5 text-white text-xs font-semibold rounded-lg transition ${
+                                b.tip === "alacak" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+                              }`}
+                              title={b.tip === "alacak" ? "Tahsilat al" : "Ödeme yap"}
+                            >
+                              {b.tip === "alacak" ? "Tahsilat" : "Ödeme"}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => borcDuzenle(b)}
+                            className="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg transition"
+                            title="Düzenle"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => borcSil(b)}
+                            className="p-2 text-stone-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="Sil"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+        )}
       </main>
 
       {modalOpen && (
@@ -2653,6 +3084,234 @@ export default function HomePage() {
               <button onClick={calisanKaydet} className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition">
                 {duzenlenenCalisan ? "Güncelle" : "Kaydet"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BORÇ/ALACAK EKLE/DÜZENLE MODAL */}
+      {borcModalOpen && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-lg max-h-[95vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-stone-900">
+                {duzenlenenBorc ? "Düzenle" : "Yeni Borç/Alacak"}
+              </h2>
+              <button onClick={() => { setBorcModalOpen(false); setDuzenlenenBorc(null); }} className="p-1 hover:bg-stone-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Tip</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setBorcForm({ ...borcForm, tip: "alacak" })}
+                    className={`py-3 rounded-lg font-semibold text-sm transition flex items-center justify-center gap-2 ${
+                      borcForm.tip === "alacak" ? "bg-emerald-500 text-white" : "bg-stone-100 text-stone-600"
+                    }`}>
+                    <ArrowDownLeft className="w-4 h-4" /> Bana Borçlu
+                  </button>
+                  <button onClick={() => setBorcForm({ ...borcForm, tip: "borc" })}
+                    className={`py-3 rounded-lg font-semibold text-sm transition flex items-center justify-center gap-2 ${
+                      borcForm.tip === "borc" ? "bg-rose-500 text-white" : "bg-stone-100 text-stone-600"
+                    }`}>
+                    <ArrowUpRight className="w-4 h-4" /> Şirket Borçlu
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Kişi / Firma</label>
+                <input
+                  type="text"
+                  value={borcForm.kisi_firma}
+                  onChange={(e) => setBorcForm({ ...borcForm, kisi_firma: e.target.value })}
+                  placeholder="Örn: Mehmet Bey, X Firması, Kuzenim Ali"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Tutar (₺)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={borcForm.tutar}
+                  onChange={(e) => setBorcForm({ ...borcForm, tutar: e.target.value })}
+                  placeholder="0,00"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-xl font-bold text-stone-900 focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
+                  {borcForm.tip === "alacak" ? "Borç Verme Tarihi" : "Borç Alma Tarihi"}
+                </label>
+                <input
+                  type="date"
+                  value={borcForm.islem_tarihi}
+                  onChange={(e) => setBorcForm({ ...borcForm, islem_tarihi: e.target.value })}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Açıklama (opsiyonel)</label>
+                <textarea
+                  value={borcForm.aciklama}
+                  onChange={(e) => setBorcForm({ ...borcForm, aciklama: e.target.value })}
+                  placeholder="Örn: Düğün borç para, kamera ödünç verdim, kuzene yardım..."
+                  rows={3}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400 resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Telefon (opsiyonel)</label>
+                <input
+                  type="tel"
+                  value={borcForm.telefon}
+                  onChange={(e) => setBorcForm({ ...borcForm, telefon: e.target.value })}
+                  placeholder="0555 555 5555"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-white border-t border-stone-200 p-4 flex gap-2">
+              <button onClick={() => { setBorcModalOpen(false); setDuzenlenenBorc(null); }} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200 transition">İptal</button>
+              <button onClick={borcKaydet} className="flex-1 py-3 bg-stone-900 text-white rounded-lg font-semibold text-sm hover:bg-stone-800 transition">
+                {duzenlenenBorc ? "Güncelle" : "Kaydet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BORÇ HAREKET MODAL (Tahsilat/Ödeme) */}
+      {borcHareketModalOpen && secilenBorc && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-md max-h-[95vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-stone-900">
+                {secilenBorc.tip === "alacak" ? "Tahsilat Al" : "Ödeme Yap"}
+              </h2>
+              <button onClick={() => setBorcHareketModalOpen(false)} className="p-1 hover:bg-stone-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-stone-50 p-4 rounded-lg">
+                <div className="text-sm font-bold text-stone-900 mb-1">{secilenBorc.kisi_firma}</div>
+                <div className="text-sm text-stone-600">Toplam: <span className="font-bold">{formatTL(Number(secilenBorc.tutar))}</span></div>
+                <div className="text-sm text-stone-600">
+                  Şu ana kadar {secilenBorc.tip === "alacak" ? "tahsil edilen" : "ödenen"}: 
+                  <span className="font-bold text-emerald-600 ml-1">{formatTL(Number(secilenBorc.odenen_tutar))}</span>
+                </div>
+                <div className="text-sm text-stone-600">
+                  Kalan: <span className="font-bold text-rose-600">{formatTL(Number(secilenBorc.tutar) - Number(secilenBorc.odenen_tutar))}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">
+                  {secilenBorc.tip === "alacak" ? "Alınan Tutar" : "Ödenen Tutar"} (₺)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={borcHareketTutari}
+                  onChange={(e) => setBorcHareketTutari(e.target.value)}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-xl font-bold focus:outline-none focus:border-stone-400"
+                  autoFocus
+                />
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => setBorcHareketTutari(String(Number(secilenBorc.tutar) - Number(secilenBorc.odenen_tutar)))}
+                    className="flex-1 py-2 bg-stone-100 text-stone-700 rounded-lg text-xs font-semibold hover:bg-stone-200">
+                    Tamamı
+                  </button>
+                  <button onClick={() => setBorcHareketTutari(String((Number(secilenBorc.tutar) - Number(secilenBorc.odenen_tutar)) / 2))}
+                    className="flex-1 py-2 bg-stone-100 text-stone-700 rounded-lg text-xs font-semibold hover:bg-stone-200">
+                    Yarısı
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Tarih</label>
+                <input
+                  type="date"
+                  value={borcHareketTarihi}
+                  onChange={(e) => setBorcHareketTarihi(e.target.value)}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5 uppercase tracking-wider">Açıklama (opsiyonel)</label>
+                <input
+                  type="text"
+                  value={borcHareketAciklama}
+                  onChange={(e) => setBorcHareketAciklama(e.target.value)}
+                  placeholder="Örn: Havale, elden, EFT"
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:border-stone-400"
+                />
+              </div>
+            </div>
+            <div className="sticky bottom-0 bg-white border-t border-stone-200 p-4 flex gap-2">
+              <button onClick={() => setBorcHareketModalOpen(false)} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-lg font-semibold text-sm hover:bg-stone-200">İptal</button>
+              <button onClick={borcHareketKaydet} className={`flex-1 py-3 text-white rounded-lg font-semibold text-sm ${
+                secilenBorc.tip === "alacak" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+              }`}>
+                Kaydet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BORÇ DETAY MODAL (Hareket geçmişi) */}
+      {borcDetayModalOpen && detayBorc && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-md max-h-[95vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-stone-900">Hareket Geçmişi</h2>
+              <button onClick={() => setBorcDetayModalOpen(false)} className="p-1 hover:bg-stone-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-stone-50 p-3 rounded-lg">
+                <div className="font-bold text-stone-900">{detayBorc.kisi_firma}</div>
+                <div className="text-xs text-stone-500 mt-1">
+                  {detayBorc.tip === "alacak" ? "Bana Borçlu" : "Şirket Borçlu"} · {formatTL(Number(detayBorc.tutar))}
+                </div>
+              </div>
+              {borcHareketleri.filter(h => h.borc_id === detayBorc.id).length === 0 ? (
+                <p className="text-sm text-stone-400 text-center py-8">Henüz hareket yok</p>
+              ) : (
+                <div className="space-y-2">
+                  {borcHareketleri
+                    .filter(h => h.borc_id === detayBorc.id)
+                    .map(h => (
+                      <div key={h.id} className="flex items-center gap-2 p-3 bg-stone-50 rounded-lg">
+                        <div className={`w-2 h-2 rounded-full ${detayBorc.tip === "alacak" ? "bg-emerald-500" : "bg-rose-500"}`} />
+                        <div className="flex-1">
+                          <div className="font-bold text-stone-900">{formatTL(Number(h.tutar))}</div>
+                          <div className="text-xs text-stone-500">
+                            {formatDate(h.tarih)} · {h.yapan_ortak}
+                            {h.aciklama && ` · ${h.aciklama}`}
+                          </div>
+                        </div>
+                        <button onClick={() => borcHareketSil(h, detayBorc)} className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
